@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, useId } from "react";
 import { CASINOS, getDefaultCasino, getCasinoTheme, getCasinoScript, SCRIPT_FONTS_QUERY } from "./casinos.js";
 
 const FELT = {
@@ -21,52 +21,121 @@ const SUIT_KEYS = ["H", "D", "S", "C"];
 
 const CHIP_DENOMS = [
   {
-    value: 5,
-    face: "#F7F1E1",
+    value: 1,
+    band: "#F4EFE3",
+    mark: "#C9A227",
+    markAlt: "#E8D48A",
+    center: "#FFFEF9",
+    ink: "#141414",
+    face: "#F4EFE3",
     rim: "#C9A227",
-    ink: "#1A1A1A",
-    edge: "#E8DFC7",
+    edge: "#D9D0BC",
     spot: "#C9A227",
+  },
+  {
+    value: 5,
+    band: "#A8D0E8",
+    mark: "#2E6F9A",
+    markAlt: "#7EB6D4",
+    center: "#FFFEF9",
+    ink: "#141414",
+    // kept for stack shadow / legacy callers
+    face: "#A8D0E8",
+    rim: "#C9A227",
+    edge: "#7EB6D4",
+    spot: "#2E6F9A",
   },
   {
     value: 10,
-    face: "#1B5E3B",
-    rim: "#E8DFC7",
-    ink: "#F7F1E1",
-    edge: "#0E3D26",
-    spot: "#E8DFC7",
+    band: "#1F6B42",
+    mark: "#D7EFE0",
+    markAlt: "#8FCBAA",
+    center: "#FFFEF9",
+    ink: "#141414",
+    face: "#1F6B42",
+    rim: "#C9A227",
+    edge: "#0F3F26",
+    spot: "#D7EFE0",
   },
   {
     value: 25,
-    face: "#9B2C2C",
-    rim: "#F7F1E1",
-    ink: "#F7F1E1",
-    edge: "#6E1C1C",
-    spot: "#F7F1E1",
+    band: "#A31F2B",
+    mark: "#F7E4E6",
+    markAlt: "#E39AA1",
+    center: "#FFFEF9",
+    ink: "#141414",
+    face: "#A31F2B",
+    rim: "#C9A227",
+    edge: "#6B1218",
+    spot: "#F7E4E6",
   },
   {
     value: 100,
+    band: "#1A1A1A",
+    mark: "#C9A227",
+    markAlt: "#E8D48A",
+    center: "#FFFEF9",
+    ink: "#141414",
     face: "#1A1A1A",
     rim: "#C9A227",
-    ink: "#F7F1E1",
-    edge: "#0A0A0A",
+    edge: "#050505",
     spot: "#C9A227",
+  },
+  {
+    value: 500,
+    band: "#5B2C6F",
+    mark: "#E8D48A",
+    markAlt: "#C39BD3",
+    center: "#FFFEF9",
+    ink: "#141414",
+    face: "#5B2C6F",
+    rim: "#C9A227",
+    edge: "#3B1A48",
+    spot: "#E8D48A",
   },
 ];
 
-const DECKS = 4;
-const SHOE_SIZE = DECKS * 52;
-const RESHUFFLE_AT = Math.floor(SHOE_SIZE * 0.25);
+const DEFAULT_DECKS = 4;
 const STARTING_BANK = 1000;
 const DEAL_STEP_MS = 380;
 const DEAL_FLIGHT_MS = 360;
 const DEALER_DRAW_MS = 520;
 const CHIP_FLY_MS = 700;
 const SHUFFLE_MS = 2000;
-const CHIP_ORDER = [100, 25, 10, 5];
+const SHUFFLE_DECK_MS = 850;
+const SHUFFLE_STACK_MS = 700;
+const CHIP_ORDER = [500, 100, 25, 10, 5, 1];
+const DECK_OPTIONS = [1, 2, 4, 6, 8];
+
+/** Survives React Strict Mode remount so boot shuffle isn't cancelled mid-flight. */
+let shoeSessionBootstrapped = false;
 
 function chipStyle(value) {
   return CHIP_DENOMS.find((c) => c.value === value) || CHIP_DENOMS[0];
+}
+
+/** Chips offered at a table given min/max bets. */
+function chipsForTable(minBet = 5, maxBet = 1000) {
+  const floor =
+    [...CHIP_DENOMS].reverse().find((c) => c.value <= minBet)?.value ?? minBet;
+  return CHIP_DENOMS.filter((c) => c.value >= floor && c.value <= maxBet);
+}
+
+/** Arc label + watermark initials for branded chips. */
+function chipBrand(name) {
+  const raw = String(name || "Blackjack").trim();
+  const upper = raw.toUpperCase();
+  const words = raw.split(/\s+/).filter(Boolean);
+  const initials =
+    words.length >= 2
+      ? (words[0][0] + words[words.length - 1][0]).toUpperCase()
+      : upper.slice(0, 2);
+  return {
+    label: upper.length > 22 ? `${upper.slice(0, 21)}…` : upper,
+    initials: initials || "BJ",
+    fontSize: upper.length > 18 ? 4.4 : upper.length > 14 ? 5 : upper.length > 10 ? 5.6 : 6.2,
+    tracking: upper.length > 16 ? 0.04 : upper.length > 12 ? 0.08 : 0.12,
+  };
 }
 
 /** Visual stack pieces for a bet (nearest $5). */
@@ -96,20 +165,68 @@ function nextHandId() {
   return `h${handSeq}`;
 }
 
-function makeShoe() {
+function makeOrderedDeck() {
   const cards = [];
-  for (let d = 0; d < DECKS; d += 1) {
-    for (const suit of SUIT_KEYS) {
-      for (const rank of RANKS) {
-        cards.push({ rank, suit, id: nextCardId() });
-      }
+  for (const suit of SUIT_KEYS) {
+    for (const rank of RANKS) {
+      cards.push({ rank, suit, id: nextCardId() });
     }
   }
+  return cards;
+}
+
+function fisherYates(list) {
+  const cards = list.slice();
   for (let i = cards.length - 1; i > 0; i -= 1) {
     const j = Math.floor(Math.random() * (i + 1));
     [cards[i], cards[j]] = [cards[j], cards[i]];
   }
   return cards;
+}
+
+/** Interleave two halves like a table riffle. */
+function riffleHalves(deck) {
+  const mid = Math.floor(deck.length / 2);
+  const left = deck.slice(0, mid);
+  const right = deck.slice(mid);
+  const merged = [];
+  let i = 0;
+  let j = 0;
+  while (i < left.length || j < right.length) {
+    const takeL = Math.min(left.length - i, 1 + Math.floor(Math.random() * 3));
+    for (let k = 0; k < takeL; k += 1) merged.push(left[i++]);
+    const takeR = Math.min(right.length - j, 1 + Math.floor(Math.random() * 3));
+    for (let k = 0; k < takeR; k += 1) merged.push(right[j++]);
+  }
+  return merged;
+}
+
+function makeShoe(decks = DEFAULT_DECKS) {
+  const cards = [];
+  for (let d = 0; d < decks; d += 1) {
+    cards.push(...makeOrderedDeck());
+  }
+  return fisherYates(cards);
+}
+
+/** Build shoe by riffle-shuffling each deck half-and-half, then washing the stack. */
+function buildRiffleShoe(decks = DEFAULT_DECKS) {
+  const piles = [];
+  for (let d = 0; d < decks; d += 1) {
+    piles.push(riffleHalves(fisherYates(makeOrderedDeck())));
+  }
+  return fisherYates(piles.flat());
+}
+
+/** Move `fraction` of cards from the deal end to the bottom (player cut). */
+function applyPlayerCut(shoe, fraction) {
+  const n = shoe.length;
+  if (n < 4) return shoe.slice();
+  const pct = Math.min(0.85, Math.max(0.15, fraction));
+  const take = Math.max(1, Math.min(n - 1, Math.round(n * pct)));
+  const moved = shoe.slice(n - take);
+  const rest = shoe.slice(0, n - take);
+  return [...moved, ...rest];
 }
 
 function drawFromShoe(shoe) {
@@ -173,15 +290,21 @@ function canSplit(hand, bank) {
   return bank >= hand.bet;
 }
 
-/** Dealer draws until 17+ (stands on soft 17). */
-function dealerPlayOut(cards, shoe) {
+/** Dealer draws until 17+; optionally hits soft 17. */
+function dealerPlayOut(cards, shoe, { hitSoft17 = false } = {}) {
   let nextCards = cards.map((c) => ({ ...c, faceDown: false }));
   let nextShoe = shoe;
-  while (evaluateHand(nextCards).total < 17) {
-    const drawn = drawFromShoe(nextShoe);
-    if (!drawn.card) break;
-    nextCards = [...nextCards, drawn.card];
-    nextShoe = drawn.shoe;
+  while (true) {
+    const ev = evaluateHand(nextCards);
+    if (ev.total > 17) break;
+    if (ev.total < 17 || (ev.total === 17 && hitSoft17 && ev.soft)) {
+      const drawn = drawFromShoe(nextShoe);
+      if (!drawn.card) break;
+      nextCards = [...nextCards, drawn.card];
+      nextShoe = drawn.shoe;
+      continue;
+    }
+    break;
   }
   return { cards: nextCards, shoe: nextShoe };
 }
@@ -198,8 +321,9 @@ function formatMoney(n) {
  * - profit: round P&L for this hand (win even money = +bet, BJ = +1.5×bet, push = 0, lose = −bet)
  * - outcome: win | loss | push | blackjack (for banner)
  */
-function settleHand(hand, dealerEval) {
+function settleHand(hand, dealerEval, { bjPayout = "3:2" } = {}) {
   const bet = hand.bet;
+  const bjMult = bjPayout === "6:5" ? 1.2 : 1.5;
 
   if (hand.status === "bust" || hand.status === "lost") {
     return {
@@ -214,7 +338,7 @@ function settleHand(hand, dealerEval) {
     if (dealerEval.blackjack) {
       return { status: "push", credit: bet, profit: 0, outcome: "push" };
     }
-    const profit = bet * 1.5;
+    const profit = bet * bjMult;
     return {
       status: "blackjack",
       credit: bet + profit,
@@ -380,7 +504,7 @@ function Card({ rank, suit, faceDown = false, dealKey, flipping = false, compact
 }
 
 /** Realistic acrylic dealing shoe — card-back stack + exit lip. */
-function DealerShoe({ remaining, total = SHOE_SIZE, shuffling = false }) {
+function DealerShoe({ remaining, total = DEFAULT_DECKS * 52, shuffling = false }) {
   const pct = Math.max(0, Math.min(1, remaining / total));
   const layers = Math.max(1, Math.min(12, Math.round(1 + pct * 11)));
   const deckDepth = Math.max(6, Math.round(8 + pct * 34));
@@ -448,7 +572,221 @@ function DealerShoe({ remaining, total = SHOE_SIZE, shuffling = false }) {
   );
 }
 
-function FeltChip({ value, face, rim, ink, edge, spot, size = 52, offset = 0 }) {
+/** Ornate ceramic chip — scalloped rim, gold ring, casino name on both arcs. */
+function ChipFace({
+  value,
+  band,
+  mark,
+  markAlt,
+  center,
+  ink,
+  face,
+  spot,
+  rim,
+  size,
+  casinoName = "Blackjack",
+}) {
+  const uid = useId().replace(/:/g, "");
+  const goldId = `chip-gold-${uid}`;
+  const glitterId = `chip-glitter-${uid}`;
+  const topPath = `chip-top-${uid}`;
+  const botPath = `chip-bot-${uid}`;
+  const rimBand = band || face || "#A8D0E8";
+  const markA = mark || spot || "#2E6F9A";
+  const markB = markAlt || rim || "#7EB6D4";
+  const faceCenter = center || "#FFFEF9";
+  const textInk = ink || "#141414";
+  const brand = chipBrand(casinoName);
+  const valueText = `$${value}`;
+  const valueSize = value >= 100 ? 20 : value >= 25 ? 22 : 24;
+  const chipFont = "'Bebas Neue', sans-serif";
+
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 100 100"
+      aria-hidden
+      style={{ display: "block" }}
+    >
+      <defs>
+        <linearGradient id={goldId} x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#F8ECC0" />
+          <stop offset="25%" stopColor="#E0B84A" />
+          <stop offset="50%" stopColor="#C9A227" />
+          <stop offset="75%" stopColor="#F0D978" />
+          <stop offset="100%" stopColor="#A67C1A" />
+        </linearGradient>
+        <filter id={glitterId} x="-20%" y="-20%" width="140%" height="140%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="1.1"
+            numOctaves="3"
+            stitchTiles="stitch"
+            result="noise"
+          />
+          <feColorMatrix
+            in="noise"
+            type="matrix"
+            values="0 0 0 0 0.85
+                    0 0 0 0 0.68
+                    0 0 0 0 0.25
+                    0 0 0 0.55 0"
+            result="goldNoise"
+          />
+          <feComposite in="goldNoise" in2="SourceGraphic" operator="in" result="clipped" />
+          <feBlend in="SourceGraphic" in2="clipped" mode="screen" />
+        </filter>
+        <path id={topPath} d="M 22,57 A 28.5,28.5 0 0,1 78,57" fill="none" />
+        <path id={botPath} d="M 78,57 A 28.5,28.5 0 0,1 22,57" fill="none" />
+      </defs>
+
+      {/* Base ceramic disc */}
+      <circle cx="50" cy="50" r="49" fill="#FFFEF9" />
+      <circle cx="50" cy="50" r="49" fill="none" stroke="#E4DCC8" strokeWidth="0.6" />
+
+      {/* Colored outer band */}
+      <circle
+        cx="50"
+        cy="50"
+        r="44.5"
+        fill="none"
+        stroke={rimBand}
+        strokeWidth="9.5"
+      />
+
+      {/* White scallops biting into the band */}
+      {Array.from({ length: 8 }, (_, i) => {
+        const deg = i * 45;
+        const rad = ((deg - 90) * Math.PI) / 180;
+        const x = 50 + Math.cos(rad) * 39.2;
+        const y = 50 + Math.sin(rad) * 39.2;
+        return <circle key={`sc-${deg}`} cx={x} cy={y} r="5.2" fill={faceCenter} />;
+      })}
+
+      {/* Alternating rim icons: teardrop + crown tab */}
+      {Array.from({ length: 8 }, (_, i) => {
+        const deg = i * 45 + 22.5;
+        const isCrown = i % 2 === 1;
+        return (
+          <g key={`ic-${deg}`} transform={`rotate(${deg} 50 50)`}>
+            {isCrown ? (
+              <g transform="translate(50, 8.5)">
+                <rect x="-4.2" y="-1.2" width="8.4" height="6.2" rx="1.2" fill={faceCenter} />
+                <path
+                  d="M -2.8 3.2 L -2.8 0.4 L -1.2 -1.2 L 0 0.2 L 1.2 -1.2 L 2.8 0.4 L 2.8 3.2 Z"
+                  fill={markB}
+                />
+              </g>
+            ) : (
+              <ellipse
+                cx="50"
+                cy="9.2"
+                rx="2.4"
+                ry="3.3"
+                fill={markA}
+              />
+            )}
+          </g>
+        );
+      })}
+
+      {/* Inner white field under gold ring */}
+      <circle cx="50" cy="50" r="33.5" fill={faceCenter} />
+
+      {/* Metallic glitter gold ring */}
+      <circle
+        cx="50"
+        cy="50"
+        r="33.2"
+        fill="none"
+        stroke={`url(#${goldId})`}
+        strokeWidth="3.4"
+        filter={`url(#${glitterId})`}
+      />
+      <circle
+        cx="50"
+        cy="50"
+        r="31.2"
+        fill="none"
+        stroke="#F6E7B0"
+        strokeWidth="0.55"
+        opacity="0.85"
+      />
+
+      {/* Faint watermark initials */}
+      <text
+        x="50"
+        y="52"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill="#D9D2C4"
+        fontFamily={chipFont}
+        fontSize="26"
+        opacity="0.5"
+        letterSpacing="1"
+        style={{ userSelect: "none" }}
+      >
+        {brand.initials}
+      </text>
+
+      {/* Casino name — top + bottom arcs */}
+      <text
+        fill={textInk}
+        fontFamily={chipFont}
+        fontSize={brand.fontSize}
+        letterSpacing={`${brand.tracking}em`}
+        style={{ userSelect: "none" }}
+      >
+        <textPath href={`#${topPath}`} startOffset="50%" textAnchor="middle">
+          {brand.label}
+        </textPath>
+      </text>
+      <text
+        fill={textInk}
+        fontFamily={chipFont}
+        fontSize={brand.fontSize}
+        letterSpacing={`${brand.tracking}em`}
+        style={{ userSelect: "none" }}
+      >
+        <textPath href={`#${botPath}`} startOffset="50%" textAnchor="middle">
+          {brand.label}
+        </textPath>
+      </text>
+
+      {/* Denomination */}
+      <text
+        x="50"
+        y="51"
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fill={textInk}
+        fontFamily={chipFont}
+        fontSize={valueSize}
+        letterSpacing="0.5"
+        style={{ userSelect: "none" }}
+      >
+        {valueText}
+      </text>
+    </svg>
+  );
+}
+
+function FeltChip({
+  value,
+  band,
+  mark,
+  markAlt,
+  center,
+  ink,
+  face,
+  spot,
+  rim,
+  edge,
+  size = 52,
+  offset = 0,
+  casinoName = "Blackjack",
+}) {
   return (
     <div
       aria-hidden
@@ -457,58 +795,39 @@ function FeltChip({ value, face, rim, ink, edge, spot, size = 52, offset = 0 }) 
         position: "relative",
         width: size,
         height: size,
-        marginTop: offset ? -Math.round(size * 0.78) : 0,
+        marginTop: offset ? -Math.round(size * 0.72) : 0,
         borderRadius: "50%",
         flexShrink: 0,
-        background: `
-          radial-gradient(circle at 32% 28%, rgba(255,255,255,0.35), transparent 42%),
-          repeating-conic-gradient(
-            from 0deg,
-            ${spot || rim} 0deg 18deg,
-            transparent 18deg 45deg
-          ),
-          radial-gradient(circle at 50% 55%, ${face} 0%, ${edge || face} 78%)
-        `,
-        backgroundBlendMode: "normal, soft-light, normal",
-        color: ink,
-        boxShadow: `
-          0 4px 10px rgba(0,0,0,0.45),
-          0 1px 0 rgba(255,255,255,0.2) inset,
-          0 -2px 4px rgba(0,0,0,0.35) inset
-        `,
-        border: `2px solid ${rim}`,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
+        filter: `drop-shadow(0 ${2 + offset * 0.35}px ${5 + offset * 0.25}px rgba(0,0,0,0.55))`,
         zIndex: offset + 1,
       }}
     >
-      <span
-        style={{
-          position: "relative",
-          zIndex: 2,
-          width: "58%",
-          height: "58%",
-          borderRadius: "50%",
-          border: `2px solid ${rim}`,
-          background: `radial-gradient(circle at 40% 35%, ${face}, ${edge || face})`,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "'Bebas Neue', sans-serif",
-          fontSize: size >= 48 ? 15 : 13,
-          letterSpacing: 0.5,
-          boxShadow: "inset 0 1px 2px rgba(0,0,0,0.25)",
-        }}
-      >
-        {value}
-      </span>
+      <ChipFace
+        value={value}
+        band={band}
+        mark={mark}
+        markAlt={markAlt}
+        center={center}
+        ink={ink}
+        face={face}
+        spot={spot}
+        rim={rim}
+        edge={edge}
+        size={size}
+        casinoName={casinoName}
+      />
     </div>
   );
 }
 
 /** Bet stack on the felt. fly: idle | to-dealer | to-player | from-dealer */
-function BetChipStack({ amount, fly = "idle", size = 52, delay = 0 }) {
+function BetChipStack({
+  amount,
+  fly = "idle",
+  size = 52,
+  delay = 0,
+  casinoName = "Blackjack",
+}) {
   const chips = chipsForAmount(amount, 5);
   if (!chips.length) return null;
   const anim =
@@ -542,6 +861,10 @@ function BetChipStack({ amount, fly = "idle", size = 52, delay = 0 }) {
         <FeltChip
           key={c.id}
           value={c.value}
+          band={c.band}
+          mark={c.mark}
+          markAlt={c.markAlt}
+          center={c.center}
           face={c.face}
           rim={c.rim}
           ink={c.ink}
@@ -549,6 +872,7 @@ function BetChipStack({ amount, fly = "idle", size = 52, delay = 0 }) {
           spot={c.spot}
           size={size}
           offset={i}
+          casinoName={casinoName}
         />
       ))}
     </div>
@@ -569,6 +893,7 @@ function FeltHand({
   compact = false,
   ghost = false,
   role = "player",
+  casinoName = "Blackjack",
 }) {
   // Display cards as stored — hole stays face-down until finishRoundToDealer
   // flips it. Forcing face-up via revealHole made the flip remount start blank.
@@ -610,7 +935,6 @@ function FeltHand({
         alignItems: "flex-end",
         minHeight: compact ? 64 : 92,
         height: compact ? 64 : 92,
-        paddingLeft: shown.length > 1 ? (compact ? 14 : 20) : 0,
         boxSizing: "border-box",
       }}
     >
@@ -641,9 +965,9 @@ function FeltHand({
       className="bj-chip-spot bj-chip-spot-ph"
       aria-hidden
       style={{
-        width: compact ? 84 : 100,
-        minWidth: compact ? 84 : 100,
-        minHeight: compact ? 84 : 100,
+        width: compact ? 78 : 92,
+        minWidth: compact ? 78 : 92,
+        minHeight: compact ? 88 : 104,
         visibility: "hidden",
         pointerEvents: "none",
         flexShrink: 0,
@@ -661,10 +985,10 @@ function FeltHand({
           alignItems: "center",
           justifyContent: "flex-end",
           gap: 4,
-          width: compact ? 84 : 100,
-          minWidth: compact ? 84 : 100,
-          minHeight: compact ? 84 : 100,
-          padding: compact ? "12px 10px 8px" : "14px 12px 10px",
+          width: compact ? 78 : 92,
+          minWidth: compact ? 78 : 92,
+          minHeight: compact ? 88 : 104,
+          padding: 0,
           boxSizing: "border-box",
           overflow: "visible",
           position: "relative",
@@ -673,15 +997,14 @@ function FeltHand({
           flexShrink: 0,
         }}
       >
-        <div className="bj-chip-spot-ring" aria-hidden />
         <div
           className="bj-chip-spot-stack"
           style={{
             display: "flex",
             alignItems: "flex-end",
             justifyContent: "center",
-            gap: 10,
-            minHeight: compact ? 48 : 56,
+            gap: 8,
+            minHeight: compact ? 70 : 82,
             position: "relative",
             zIndex: 1,
             overflow: "visible",
@@ -691,15 +1014,17 @@ function FeltHand({
             key={`bet-${betFly}-${chipFly}`}
             amount={bet}
             fly={betFly}
-            size={compact ? 40 : 48}
+            size={compact ? 70 : 82}
+            casinoName={casinoName}
           />
           {showPayStack && (
             <BetChipStack
               key={`pay-${payFly}-${chipFly}`}
               amount={payoutAmount}
               fly={payFly}
-              size={compact ? 40 : 48}
+              size={compact ? 70 : 82}
               delay={40}
+              casinoName={casinoName}
             />
           )}
         </div>
@@ -742,7 +1067,23 @@ function FeltHand({
   );
 }
 
-function Chip({ value, face, rim, ink, edge, spot, selected, onClick, disabled, size = 56 }) {
+function Chip({
+  value,
+  band,
+  mark,
+  markAlt,
+  center,
+  ink,
+  face,
+  rim,
+  edge,
+  spot,
+  selected,
+  onClick,
+  disabled,
+  size = 56,
+  casinoName = "Blackjack",
+}) {
   return (
     <button
       type="button"
@@ -756,50 +1097,47 @@ function Chip({ value, face, rim, ink, edge, spot, selected, onClick, disabled, 
         width: size,
         height: size,
         borderRadius: "50%",
-        border: `2px solid ${rim}`,
-        background: `
-          radial-gradient(circle at 32% 28%, rgba(255,255,255,0.35), transparent 42%),
-          repeating-conic-gradient(
-            from 0deg,
-            ${spot || rim} 0deg 18deg,
-            transparent 18deg 45deg
-          ),
-          radial-gradient(circle at 50% 55%, ${face} 0%, ${edge || face} 78%)
-        `,
-        color: ink,
-        boxShadow: selected
-          ? `0 0 0 3px ${FELT.gold}, 0 6px 14px rgba(0,0,0,0.45)`
-          : "0 5px 12px rgba(0,0,0,0.4)",
-        cursor: disabled ? "default" : "pointer",
+        border: "none",
+        background: "transparent",
         padding: 0,
+        cursor: disabled ? "default" : "pointer",
         outlineOffset: 3,
-        transform: selected ? "scale(1.06)" : "none",
-        transition: "box-shadow 0.15s, transform 0.15s",
+        transform: selected ? "scale(1.08)" : "none",
+        transition: "transform 0.15s, filter 0.15s",
         opacity: disabled ? 0.4 : 1,
-        overflow: "hidden",
         flexShrink: 0,
+        filter: selected
+          ? "drop-shadow(0 5px 10px rgba(0,0,0,0.5))"
+          : "drop-shadow(0 4px 8px rgba(0,0,0,0.45))",
       }}
     >
-      <span
-        style={{
-          position: "relative",
-          zIndex: 1,
-          width: "58%",
-          height: "58%",
-          margin: "0 auto",
-          borderRadius: "50%",
-          border: `2px solid ${rim}`,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "'Bebas Neue', sans-serif",
-          fontSize: size >= 48 ? 15 : 12,
-          letterSpacing: 0.5,
-          background: face,
-        }}
-      >
-        {value}
-      </span>
+      {selected ? (
+        <span
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: -4,
+            borderRadius: "50%",
+            border: `2.5px solid ${FELT.gold}`,
+            boxShadow: `0 0 10px rgba(201,162,39,0.45)`,
+            pointerEvents: "none",
+          }}
+        />
+      ) : null}
+      <ChipFace
+        value={value}
+        band={band}
+        mark={mark}
+        markAlt={markAlt}
+        center={center}
+        ink={ink}
+        face={face}
+        rim={rim}
+        edge={edge}
+        spot={spot}
+        size={size}
+        casinoName={casinoName}
+      />
     </button>
   );
 }
@@ -1063,7 +1401,7 @@ function CasinoSelectScreen({
                     <div>
                       <div className="bj-casino-name">{c.name}</div>
                       <div className="bj-casino-meta">
-                        {c.city}, {c.state}
+                        {c.city}, {c.state} · min ${c.minBet}
                       </div>
                     </div>
                   </button>
@@ -1086,30 +1424,320 @@ function CasinoSelectScreen({
   );
 }
 
+function SettingsPanel({
+  open,
+  onClose,
+  bjPayout,
+  onBjPayout,
+  hitSoft17,
+  onHitSoft17,
+  deckCount,
+  onDeckCount,
+  playerCut,
+  onPlayerCut,
+  canEdit,
+  onRestart,
+}) {
+  if (!open) return null;
+  return (
+    <div className="bj-settings-overlay" role="dialog" aria-modal="true" aria-label="Table settings">
+      <div className="bj-settings-panel">
+        <div className="bj-settings-head">
+          <div>
+            <div className="bj-settings-title">TABLE RULES</div>
+            <div className="bj-settings-sub">
+              {canEdit ? "Changes apply to the next deal" : "Finish the hand to edit rules"}
+            </div>
+          </div>
+          <button type="button" className="bj-settings-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+
+        <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
+          <div className="bj-settings-label">Blackjack pays</div>
+          <div className="bj-settings-seg">
+            {["3:2", "6:5"].map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                className={`bj-settings-seg-btn${bjPayout === opt ? " is-on" : ""}`}
+                disabled={!canEdit}
+                onClick={() => onBjPayout(opt)}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
+          <div className="bj-settings-label">Dealer on soft 17</div>
+          <div className="bj-settings-seg">
+            <button
+              type="button"
+              className={`bj-settings-seg-btn${!hitSoft17 ? " is-on" : ""}`}
+              disabled={!canEdit}
+              onClick={() => onHitSoft17(false)}
+            >
+              STAND
+            </button>
+            <button
+              type="button"
+              className={`bj-settings-seg-btn${hitSoft17 ? " is-on" : ""}`}
+              disabled={!canEdit}
+              onClick={() => onHitSoft17(true)}
+            >
+              HIT
+            </button>
+          </div>
+        </div>
+
+        <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
+          <div className="bj-settings-label">Decks in shoe</div>
+          <div className="bj-settings-seg bj-settings-decks">
+            {DECK_OPTIONS.map((n) => (
+              <button
+                key={n}
+                type="button"
+                className={`bj-settings-seg-btn${deckCount === n ? " is-on" : ""}`}
+                disabled={!canEdit}
+                onClick={() => onDeckCount(n)}
+              >
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
+          <div className="bj-settings-label">Player cut</div>
+          <div className="bj-settings-seg">
+            <button
+              type="button"
+              className={`bj-settings-seg-btn${playerCut ? " is-on" : ""}`}
+              disabled={!canEdit}
+              onClick={() => onPlayerCut(true)}
+            >
+              ON
+            </button>
+            <button
+              type="button"
+              className={`bj-settings-seg-btn${!playerCut ? " is-on" : ""}`}
+              disabled={!canEdit}
+              onClick={() => onPlayerCut(false)}
+            >
+              OFF
+            </button>
+          </div>
+          <div className="bj-settings-hint">
+            On by default — before every new shoe you tap a spot in the deck to
+            place the cut card (no slider, no card count).
+          </div>
+        </div>
+
+        <button
+          type="button"
+          className="bj-settings-restart"
+          disabled={!canEdit}
+          onClick={onRestart}
+        >
+          RESTART GAME
+        </button>
+        <div className="bj-settings-hint">
+          Resets the bank, reshuffles every deck half-and-half, loads the shoe,
+          then asks you to cut when Player cut is on.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Full-table shuffle ceremony: each deck split & riffled, then stacked into the shoe. */
+function ShuffleCeremony({ decks, stage }) {
+  // stage: riffling | stacking
+  return (
+    <div className="bj-shuffle-overlay" aria-live="polite" aria-label="Shuffling shoe">
+      <div className="bj-shuffle-panel">
+        <div className="bj-shuffle-title">
+          {stage === "stacking" ? "LOADING SHOE" : "SHUFFLING"}
+        </div>
+        <div className="bj-shuffle-sub">
+          {stage === "stacking"
+            ? `Stacking ${decks} deck${decks === 1 ? "" : "s"} into the shoe`
+            : `Riffling each of ${decks} deck${decks === 1 ? "" : "s"} half and half`}
+        </div>
+        <div className="bj-shuffle-decks" data-count={decks}>
+          {Array.from({ length: decks }, (_, i) => (
+            <div
+              key={i}
+              className={`bj-shuffle-deck${stage === "riffling" ? " is-riffle" : " is-stack"}`}
+              style={{ animationDelay: `${i * 90}ms` }}
+            >
+              <div className="bj-shuffle-half bj-shuffle-half-l" />
+              <div className="bj-shuffle-half bj-shuffle-half-r" />
+              <div className="bj-shuffle-deck-label">D{i + 1}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Player places the cut card into the shuffled stack. */
+/** Player places the cut card by eye into a dense stack — no slider, no count. */
+function CutOverlay({ onCut }) {
+  const stackRef = useRef(null);
+  const [hoverFrac, setHoverFrac] = useState(null);
+  const [placedFrac, setPlacedFrac] = useState(null);
+  const layers = 52;
+
+  const fracFromPointer = (clientX) => {
+    const el = stackRef.current;
+    if (!el) return 0.5;
+    const rect = el.getBoundingClientRect();
+    const x = (clientX - rect.left) / Math.max(1, rect.width);
+    // Valid cut band — ends are soft-blocked so you can't dump the whole shoe
+    return Math.min(0.78, Math.max(0.22, x));
+  };
+
+  const active = placedFrac ?? hoverFrac;
+
+  return (
+    <div className="bj-cut-overlay" role="dialog" aria-modal="true" aria-label="Cut the cards">
+      <div className="bj-cut-panel">
+        <div className="bj-cut-title">PLACE THE CUT</div>
+        <div className="bj-cut-sub">
+          Find a spot in the stack and tap it. The yellow cut card goes there —
+          everything above moves to the bottom of the shoe. No second chances.
+        </div>
+
+        <div
+          className="bj-cut-deck"
+          ref={stackRef}
+          role="slider"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={active != null ? Math.round(active * 100) : 50}
+          aria-label="Cut position in the deck"
+          tabIndex={0}
+          onMouseMove={(e) => {
+            if (placedFrac != null) return;
+            setHoverFrac(fracFromPointer(e.clientX));
+          }}
+          onMouseLeave={() => {
+            if (placedFrac == null) setHoverFrac(null);
+          }}
+          onClick={(e) => {
+            const f = fracFromPointer(e.clientX);
+            setPlacedFrac(f);
+            setHoverFrac(f);
+          }}
+          onKeyDown={(e) => {
+            if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Enter") return;
+            e.preventDefault();
+            const base = placedFrac ?? hoverFrac ?? 0.5;
+            if (e.key === "Enter") {
+              setPlacedFrac(base);
+              return;
+            }
+            const next = Math.min(
+              0.78,
+              Math.max(0.22, base + (e.key === "ArrowRight" ? 0.03 : -0.03))
+            );
+            setHoverFrac(next);
+            setPlacedFrac(null);
+          }}
+        >
+          <div className="bj-cut-deck-felt" aria-hidden />
+          {Array.from({ length: layers }, (_, i) => {
+            const t = i / (layers - 1);
+            // Slight fan + jitter so depth is hard to read precisely
+            const jitter = ((i * 17) % 7) - 3;
+            return (
+              <span
+                key={i}
+                className="bj-cut-spine"
+                style={{
+                  left: `${4 + t * 88}%`,
+                  top: `${18 + (jitter % 5)}px`,
+                  zIndex: i + 1,
+                  transform: `rotate(${(t - 0.5) * 6 + jitter * 0.15}deg)`,
+                }}
+              />
+            );
+          })}
+          {active != null && (
+            <div
+              className={`bj-cut-wedge${placedFrac != null ? " is-set" : ""}`}
+              style={{ left: `${4 + active * 88}%` }}
+              aria-hidden
+            >
+              <span className="bj-cut-wedge-label">CUT</span>
+            </div>
+          )}
+          {placedFrac == null && hoverFrac == null && (
+            <div className="bj-cut-hint">Tap a card in the stack</div>
+          )}
+        </div>
+
+        <button
+          type="button"
+          className="bj-cut-confirm"
+          disabled={placedFrac == null}
+          onClick={() => placedFrac != null && onCut(placedFrac)}
+        >
+          {placedFrac == null ? "CHOOSE A SPOT" : "BURN THE CUT"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function BlackjackGame() {
   const [casino, setCasino] = useState(getDefaultCasino);
   const [draftCasino, setDraftCasino] = useState(getDefaultCasino);
   const [casinoQuery, setCasinoQuery] = useState("");
   const [pickingCasino, setPickingCasino] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [bjPayout, setBjPayout] = useState("3:2");
+  const [hitSoft17, setHitSoft17] = useState(false);
+  const [deckCount, setDeckCount] = useState(DEFAULT_DECKS);
+  const [playerCut, setPlayerCut] = useState(true);
   const [isNarrow, setIsNarrow] = useState(false);
   const [phase, setPhase] = useState("betting");
-  const [selectedChip, setSelectedChip] = useState(25);
+  const [betAmount, setBetAmount] = useState(() => getDefaultCasino().minBet);
+  const [lastChip, setLastChip] = useState(() => getDefaultCasino().minBet);
   const [handCount, setHandCount] = useState(1);
   const [bank, setBank] = useState(STARTING_BANK);
   const [dealerCards, setDealerCards] = useState([]);
   const [hands, setHands] = useState([]);
   const [activeHandIndex, setActiveHandIndex] = useState(0);
-  const [shoeRemaining, setShoeRemaining] = useState(SHOE_SIZE);
+  const shoeSize = deckCount * 52;
+  const [shoeRemaining, setShoeRemaining] = useState(0);
   /** idle | pay | collect | done */
   const [chipFlyPhase, setChipFlyPhase] = useState("idle");
   const [shuffling, setShuffling] = useState(false);
+  /** idle | riffling | stacking | cutting */
+  const [shuffleStage, setShuffleStage] = useState("idle");
+  const [pendingDealAfterShuffle, setPendingDealAfterShuffle] = useState(false);
 
-  const shoeRef = useRef(makeShoe());
+  const shoeRef = useRef([]);
+  const reshuffleAtRef = useRef(Math.floor(DEFAULT_DECKS * 52 * 0.25));
+  const rulesRef = useRef({
+    bjPayout: "3:2",
+    hitSoft17: false,
+    deckCount: DEFAULT_DECKS,
+    playerCut: true,
+  });
   const timersRef = useRef([]);
   const handsRef = useRef([]);
   const dealerRef = useRef([]);
   const bankRef = useRef(STARTING_BANK);
   const activeIndexRef = useRef(0);
+  const pendingShoeRef = useRef(null);
+  const shuffleLockRef = useRef(false);
 
   const clearTimers = () => {
     timersRef.current.forEach((id) => window.clearTimeout(id));
@@ -1119,6 +1747,10 @@ export default function BlackjackGame() {
   const syncShoeCount = () => setShoeRemaining(shoeRef.current.length);
 
   useEffect(() => () => clearTimers(), []);
+
+  useEffect(() => {
+    rulesRef.current = { bjPayout, hitSoft17, deckCount, playerCut };
+  }, [bjPayout, hitSoft17, deckCount, playerCut]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return undefined;
@@ -1149,13 +1781,42 @@ export default function BlackjackGame() {
     activeIndexRef.current = activeHandIndex;
   }, [activeHandIndex]);
 
+  const tableChips = useMemo(
+    () => chipsForTable(casino.minBet, casino.maxBet),
+    [casino.minBet, casino.maxBet]
+  );
+
   const maxAffordableHands = Math.max(
     1,
-    selectedChip > 0 ? Math.floor(bank / selectedChip) : 1
+    betAmount > 0 ? Math.floor(bank / betAmount) : 1
   );
-  const totalStake = selectedChip * handCount;
+  const totalStake = betAmount * handCount;
   const canAffordDeal =
-    bank >= totalStake && selectedChip > 0 && handCount >= 1 && !shuffling;
+    bank >= totalStake &&
+    betAmount >= casino.minBet &&
+    betAmount <= casino.maxBet &&
+    handCount >= 1 &&
+    !shuffling &&
+    shuffleStage === "idle";
+
+  const addChipToBet = (value) => {
+    if (phase !== "betting" || shuffling) return;
+    const next = betAmount + value;
+    if (next > casino.maxBet) return;
+    if (next * handCount > bank) return;
+    setBetAmount(next);
+    setLastChip(value);
+    const maxHands = Math.max(1, Math.floor(bank / next) || 1);
+    if (handCount > maxHands) setHandCount(maxHands);
+  };
+
+  const clearBet = () => {
+    if (phase !== "betting" || shuffling) return;
+    setBetAmount(0);
+  };
+
+  const canEditSettings =
+    phase === "betting" && !shuffling && shuffleStage === "idle";
 
   const revealHole = phase === "dealer" || phase === "settle";
   const seatCount = phase === "betting" ? handCount : Math.max(hands.length, 1);
@@ -1168,6 +1829,97 @@ export default function BlackjackGame() {
   }, [dealerCards, revealHole]);
 
   const showTable = phase !== "betting";
+
+  const beginPlayerCut = useCallback((shoe, { dealAfter = false } = {}) => {
+    pendingShoeRef.current = shoe;
+    setPendingDealAfterShuffle(dealAfter);
+    setShuffleStage("cutting");
+    setShuffling(true);
+  }, []);
+
+  const completePlayerCut = useCallback((fraction) => {
+    const base =
+      pendingShoeRef.current || buildRiffleShoe(rulesRef.current.deckCount);
+    const cutShoe = applyPlayerCut(base, fraction);
+    shoeRef.current = cutShoe;
+    reshuffleAtRef.current = Math.floor(cutShoe.length * 0.25);
+    syncShoeCount();
+    pendingShoeRef.current = null;
+    shuffleLockRef.current = false;
+    setShuffleStage("idle");
+    setShuffling(false);
+  }, []);
+
+  /** Animate half/half riffle per deck → stack → optional cut. */
+  const runShuffleCeremony = useCallback(
+    ({ dealAfter = false, resetBank = false } = {}) => {
+      clearTimers();
+      shuffleLockRef.current = true;
+      setSettingsOpen(false);
+      setShuffling(true);
+      setShoeRemaining(0);
+      setShuffleStage("riffling");
+      setHands([]);
+      handsRef.current = [];
+      setDealerCards([]);
+      dealerRef.current = [];
+      setChipFlyPhase("idle");
+      setPhase("betting");
+      setActiveHandIndex(0);
+      setPendingDealAfterShuffle(dealAfter);
+
+      if (resetBank) {
+        setBank(STARTING_BANK);
+        bankRef.current = STARTING_BANK;
+      }
+
+      const decks = rulesRef.current.deckCount;
+      const riffleMs = Math.max(SHUFFLE_DECK_MS, decks * 160 + 500);
+
+      const stackId = window.setTimeout(() => {
+        setShuffleStage("stacking");
+      }, riffleMs);
+      timersRef.current.push(stackId);
+
+      const doneId = window.setTimeout(() => {
+        const shoe = buildRiffleShoe(decks);
+        shuffleLockRef.current = false;
+        if (rulesRef.current.playerCut) {
+          beginPlayerCut(shoe, { dealAfter });
+        } else {
+          shoeRef.current = shoe;
+          reshuffleAtRef.current = Math.floor(shoe.length * 0.25);
+          syncShoeCount();
+          setShuffling(false);
+          setShuffleStage("idle");
+        }
+      }, riffleMs + SHUFFLE_STACK_MS);
+      timersRef.current.push(doneId);
+    },
+    [beginPlayerCut]
+  );
+
+  // First visit: shuffle then cut before any deal (module flag survives Strict Mode)
+  useEffect(() => {
+    if (shoeSessionBootstrapped) {
+      // Remount after boot timers were cleared — recover with cut (or shoe) once
+      if (!shoeRef.current.length && shuffleStage === "idle" && !shuffling) {
+        const shoe = buildRiffleShoe(rulesRef.current.deckCount);
+        if (rulesRef.current.playerCut) beginPlayerCut(shoe, { dealAfter: false });
+        else {
+          shoeRef.current = shoe;
+          reshuffleAtRef.current = Math.floor(shoe.length * 0.25);
+          syncShoeCount();
+        }
+      }
+      return undefined;
+    }
+    shoeSessionBootstrapped = true;
+    runShuffleCeremony({ dealAfter: false, resetBank: false });
+    return undefined;
+    // intentionally once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const finishRoundToDealer = useCallback(() => {
     setPhase("dealer");
@@ -1204,7 +1956,9 @@ export default function BlackjackGame() {
               : h.status === "blackjack"
                 ? h
                 : { ...h, status: "standing" };
-          const result = settleHand(handForSettle, dealerEval);
+          const result = settleHand(handForSettle, dealerEval, {
+            bjPayout: rulesRef.current.bjPayout,
+          });
           creditTotal += result.credit;
           return {
             ...h,
@@ -1266,7 +2020,9 @@ export default function BlackjackGame() {
       }
 
       // Compute full dealer hand, then reveal draws one at a time
-      const played = dealerPlayOut(dealer, shoeRef.current);
+      const played = dealerPlayOut(dealer, shoeRef.current, {
+        hitSoft17: rulesRef.current.hitSoft17,
+      });
       shoeRef.current = played.shoe;
       syncShoeCount();
       const finalCards = played.cards;
@@ -1364,7 +2120,7 @@ export default function BlackjackGame() {
   );
 
   const runDeal = useCallback(() => {
-    const stake = selectedChip * handCount;
+    const stake = betAmount * handCount;
     const nextBank = bankRef.current - stake;
     setBank(nextBank);
     bankRef.current = nextBank;
@@ -1372,7 +2128,7 @@ export default function BlackjackGame() {
     const initialHands = Array.from({ length: handCount }, (_, i) => ({
       id: nextHandId(),
       cards: [],
-      bet: selectedChip,
+      bet: betAmount,
       status: "active",
       fromSplit: false,
       splitAces: false,
@@ -1423,28 +2179,36 @@ export default function BlackjackGame() {
       beginPlayerPhase(workingHands, workingDealer);
     }, DEAL_STEP_MS * (sequence.length + 1));
     timersRef.current.push(doneId);
-  }, [selectedChip, handCount, beginPlayerPhase]);
+  }, [betAmount, handCount, beginPlayerPhase]);
+
+  useEffect(() => {
+    if (!pendingDealAfterShuffle) return;
+    if (shuffling || shuffleStage !== "idle") return;
+    setPendingDealAfterShuffle(false);
+    runDeal();
+  }, [pendingDealAfterShuffle, shuffling, shuffleStage, runDeal]);
 
   const handleDeal = () => {
     if (!canAffordDeal || phase !== "betting" || shuffling) return;
     clearTimers();
 
-    const needsShuffle = shoeRef.current.length <= RESHUFFLE_AT;
+    const needsShuffle = shoeRef.current.length <= reshuffleAtRef.current;
     if (needsShuffle) {
-      setShuffling(true);
-      // Drain the visual stack before the new shoe appears
-      setShoeRemaining(0);
-      const id = window.setTimeout(() => {
-        shoeRef.current = makeShoe();
-        syncShoeCount();
-        setShuffling(false);
-        runDeal();
-      }, SHUFFLE_MS);
-      timersRef.current.push(id);
+      runShuffleCeremony({ dealAfter: true });
       return;
     }
 
     runDeal();
+  };
+
+  const handleRestartGame = () => {
+    if (!canEditSettings) return;
+    runShuffleCeremony({ dealAfter: false, resetBank: true });
+  };
+
+  const handleDeckCountChange = (n) => {
+    setDeckCount(n);
+    rulesRef.current = { ...rulesRef.current, deckCount: n };
   };
 
   const updateActiveHand = (updater) => {
@@ -1657,7 +2421,12 @@ export default function BlackjackGame() {
       setBank(nextBank);
       bankRef.current = nextBank;
     }
-    const maxHands = Math.max(1, Math.floor(nextBank / selectedChip) || 1);
+    const nextBet =
+      betAmount >= casino.minBet && betAmount <= casino.maxBet
+        ? betAmount
+        : casino.minBet;
+    if (nextBet !== betAmount) setBetAmount(nextBet);
+    const maxHands = Math.max(1, Math.floor(nextBank / nextBet) || 1);
     if (handCount > maxHands) setHandCount(maxHands);
     setHands([]);
     handsRef.current = [];
@@ -1692,7 +2461,7 @@ export default function BlackjackGame() {
     phase === "player" && activeHand && canSplit(activeHand, bank);
 
   const openCasinoPicker = () => {
-    if (phase !== "betting" || shuffling) return;
+    if (phase !== "betting" || shuffling || shuffleStage !== "idle") return;
     setDraftCasino(casino);
     setPickingCasino(true);
   };
@@ -1701,6 +2470,11 @@ export default function BlackjackGame() {
     setCasino(c);
     setDraftCasino(c);
     setPickingCasino(false);
+    setBetAmount(c.minBet);
+    const tray = chipsForTable(c.minBet, c.maxBet);
+    setLastChip(tray[0]?.value ?? c.minBet);
+    const maxHands = Math.max(1, Math.floor(bank / c.minBet) || 1);
+    if (handCount > maxHands) setHandCount(maxHands);
   };
 
   const theme = getCasinoTheme(casino);
@@ -1857,43 +2631,9 @@ export default function BlackjackGame() {
           position: relative;
           overflow: visible !important;
         }
-        .bj-chip-spot-ring {
-          position: absolute;
-          left: 50%;
-          top: 50%;
-          width: 78%;
-          height: 78%;
-          transform: translate(-50%, -54%);
-          border-radius: 50%;
-          background: radial-gradient(
-            circle at 50% 45%,
-            color-mix(in srgb, var(--casino-accent) 22%, transparent) 0%,
-            rgba(0,0,0,0.28) 70%
-          );
-          box-shadow:
-            inset 0 0 0 2px color-mix(in srgb, var(--casino-accent) 55%, transparent),
-            inset 0 0 0 5px rgba(0,0,0,0.2),
-            0 4px 12px rgba(0,0,0,0.25);
-          pointer-events: none;
-          z-index: 0;
-          animation: chipSpotPulse 2.4s ease-in-out infinite;
-        }
-        .bj-chip-spot.is-active .bj-chip-spot-ring {
-          box-shadow:
-            inset 0 0 0 2px var(--casino-accent),
-            inset 0 0 0 5px rgba(0,0,0,0.2),
-            0 0 16px color-mix(in srgb, var(--casino-accent) 35%, transparent);
-        }
         .bj-bet-stack.is-idle .bj-felt-chip {
           /* no transform idle motion — avoids clipping */
         }
-        [data-theme="neon"] .bj-chip-spot-ring { animation: chipSpotNeon 1.6s ease-in-out infinite; }
-        [data-theme="desert"] .bj-chip-spot-ring { animation: chipSpotPulse 2.8s ease-in-out infinite; }
-        [data-theme="coastal"] .bj-chip-spot-ring { animation: chipSpotPulse 2.2s ease-in-out infinite; }
-        [data-theme="mountain"] .bj-chip-spot-ring { animation: chipSpotPulse 3.4s ease-in-out infinite; }
-        [data-theme="jazz"] .bj-chip-spot-ring { animation: chipSpotPulse 1.9s ease-in-out infinite; }
-        [data-theme="goldrush"] .bj-chip-spot-ring { animation: chipSpotPulse 2s ease-in-out infinite; }
-        [data-theme="midnight"] .bj-chip-spot-ring { animation: chipSpotPulse 3s ease-in-out infinite; }
         [data-theme="neon"] .bj-bet-stack.is-idle .bj-felt-chip { animation: chipIdleSpinGlow 1.4s ease-in-out infinite; }
         [data-theme="goldrush"] .bj-bet-stack.is-idle .bj-felt-chip { animation: chipIdleSpinGlow 1.8s ease-in-out infinite; }
         [data-theme="velvet"] .bj-table-felt { animation: tableBreathe 4.5s ease-in-out infinite; }
@@ -2184,29 +2924,30 @@ export default function BlackjackGame() {
         .bj-dealer-row {
           width: 100%;
           height: 100%;
-          display: grid;
-          grid-template-columns: 72px 1fr 96px;
+          display: flex;
           align-items: center;
-          justify-items: center;
+          justify-content: center;
           z-index: 1;
           position: relative;
           min-height: 0;
           align-self: stretch;
         }
         .bj-dealer-row .bj-shoe {
-          grid-column: 3;
-          justify-self: end;
-          align-self: start;
-          margin-top: 4px;
+          position: absolute;
+          right: 0;
+          top: 4px;
+          z-index: 3;
         }
         .bj-dealer-hand {
-          grid-column: 2;
           display: flex;
           justify-content: center;
           align-items: center;
           width: 100%;
           height: 100%;
           min-height: 0;
+          /* Keep cards clear of the shoe without shifting their center */
+          padding: 0 72px;
+          box-sizing: border-box;
         }
         .bj-pays-banner {
           z-index: 1;
@@ -2393,6 +3134,343 @@ export default function BlackjackGame() {
           color: #F0E6D2;
           background: color-mix(in srgb, var(--casino-accent) 18%, transparent);
         }
+        .bj-settings-gear {
+          width: 28px;
+          height: 28px;
+          border-radius: 999px;
+          border: 1px solid rgba(232,223,199,0.35);
+          background: transparent;
+          color: rgba(232,223,199,0.75);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          flex-shrink: 0;
+          padding: 0;
+        }
+        .bj-settings-gear:hover:not(:disabled) {
+          border-color: var(--casino-accent);
+          color: #F0E6D2;
+          background: color-mix(in srgb, var(--casino-accent) 18%, transparent);
+        }
+        .bj-settings-gear:disabled { opacity: 0.35; cursor: default; }
+        .bj-settings-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 90;
+          background: rgba(4, 16, 12, 0.72);
+          backdrop-filter: blur(6px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px 12px;
+        }
+        .bj-settings-panel {
+          width: min(420px, 100%);
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          padding: 18px 16px 16px;
+          border-radius: 18px;
+          border: 1.5px solid rgba(232,223,199,0.28);
+          background: radial-gradient(ellipse at 50% 0%, #0B4530 0%, #073024 55%, #052018 100%);
+          box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+          font-family: 'Inter', sans-serif;
+        }
+        .bj-settings-head {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .bj-settings-title {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 28px;
+          letter-spacing: 0.14em;
+          color: #F0E6D2;
+        }
+        .bj-settings-sub {
+          color: rgba(232,223,199,0.6);
+          font-size: 12px;
+          margin-top: 2px;
+        }
+        .bj-settings-close {
+          border: 1px solid rgba(232,223,199,0.35);
+          background: transparent;
+          color: rgba(232,223,199,0.75);
+          border-radius: 999px;
+          width: 36px;
+          height: 36px;
+          font-size: 18px;
+          cursor: pointer;
+          line-height: 1;
+        }
+        .bj-settings-section { display: flex; flex-direction: column; gap: 8px; }
+        .bj-settings-section.is-locked { opacity: 0.45; }
+        .bj-settings-label {
+          font-family: 'Bebas Neue', sans-serif;
+          letter-spacing: 0.12em;
+          font-size: 14px;
+          color: rgba(232,223,199,0.7);
+        }
+        .bj-settings-seg {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .bj-settings-seg-btn {
+          flex: 1 1 0;
+          min-width: 56px;
+          padding: 10px 8px;
+          border-radius: 10px;
+          border: 1.5px solid rgba(232,223,199,0.28);
+          background: rgba(5,32,24,0.72);
+          color: rgba(232,223,199,0.75);
+          font-family: 'Bebas Neue', sans-serif;
+          letter-spacing: 0.1em;
+          font-size: 16px;
+          cursor: pointer;
+        }
+        .bj-settings-seg-btn.is-on {
+          border-color: var(--casino-accent, #C9A227);
+          color: #1A1A1A;
+          background: var(--casino-accent, #C9A227);
+        }
+        .bj-settings-seg-btn:disabled { cursor: default; }
+        .bj-settings-decks .bj-settings-seg-btn { flex: 0 0 calc(20% - 5px); min-width: 0; }
+        .bj-settings-hint {
+          color: rgba(232,223,199,0.5);
+          font-size: 12px;
+          line-height: 1.4;
+        }
+        .bj-settings-restart {
+          margin-top: 4px;
+          width: 100%;
+          padding: 12px;
+          border: none;
+          border-radius: 10px;
+          font-family: 'Bebas Neue', sans-serif;
+          letter-spacing: 0.14em;
+          font-size: 18px;
+          background: #E8DFC7;
+          color: #1A1A1A;
+          cursor: pointer;
+          box-shadow: 0 4px 0 #A89870;
+        }
+        .bj-settings-restart:disabled {
+          opacity: 0.45;
+          cursor: default;
+          box-shadow: none;
+          transform: translateY(4px);
+        }
+        .bj-shuffle-overlay,
+        .bj-cut-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 95;
+          background: rgba(4, 16, 12, 0.78);
+          backdrop-filter: blur(7px);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 16px;
+        }
+        .bj-shuffle-panel,
+        .bj-cut-panel {
+          width: min(520px, 100%);
+          padding: 22px 18px 18px;
+          border-radius: 18px;
+          border: 1.5px solid rgba(232,223,199,0.28);
+          background: radial-gradient(ellipse at 50% 0%, #0B4530 0%, #073024 55%, #052018 100%);
+          box-shadow: 0 20px 50px rgba(0,0,0,0.55);
+          text-align: center;
+        }
+        .bj-shuffle-title,
+        .bj-cut-title {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: clamp(28px, 7vw, 36px);
+          letter-spacing: 0.16em;
+          color: #F0E6D2;
+        }
+        .bj-shuffle-sub,
+        .bj-cut-sub {
+          color: rgba(232,223,199,0.65);
+          font-size: 13px;
+          margin: 6px 0 18px;
+          font-family: 'Inter', sans-serif;
+        }
+        .bj-shuffle-decks {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 12px;
+          justify-content: center;
+          min-height: 110px;
+          align-items: center;
+        }
+        .bj-shuffle-deck {
+          position: relative;
+          width: 54px;
+          height: 78px;
+        }
+        .bj-shuffle-half {
+          position: absolute;
+          width: 42px;
+          height: 58px;
+          border-radius: 5px;
+          border: 1.5px solid #C9A227;
+          background:
+            linear-gradient(145deg, #0E5A3F 0%, #09402C 55%, #073024 100%);
+          box-shadow: 0 6px 12px rgba(0,0,0,0.4);
+        }
+        .bj-shuffle-half-l { left: 0; top: 8px; }
+        .bj-shuffle-half-r { right: 0; top: 8px; }
+        .bj-shuffle-deck.is-riffle .bj-shuffle-half-l {
+          animation: bjRiffleL 0.65s ease-in-out 4 alternate;
+        }
+        .bj-shuffle-deck.is-riffle .bj-shuffle-half-r {
+          animation: bjRiffleR 0.65s ease-in-out 4 alternate;
+        }
+        .bj-shuffle-deck.is-stack .bj-shuffle-half-l,
+        .bj-shuffle-deck.is-stack .bj-shuffle-half-r {
+          animation: bjStackIn 0.55s ease-out both;
+          left: 6px;
+          right: auto;
+        }
+        .bj-shuffle-deck-label {
+          position: absolute;
+          left: 0;
+          right: 0;
+          bottom: -2px;
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 12px;
+          letter-spacing: 0.08em;
+          color: rgba(232,223,199,0.55);
+        }
+        @keyframes bjRiffleL {
+          from { transform: translate(-8px, 4px) rotate(-10deg); }
+          to { transform: translate(4px, -6px) rotate(-2deg); }
+        }
+        @keyframes bjRiffleR {
+          from { transform: translate(8px, -2px) rotate(10deg); }
+          to { transform: translate(-2px, 6px) rotate(2deg); }
+        }
+        @keyframes bjStackIn {
+          from { transform: translateY(-18px) scale(0.92); opacity: 0.5; }
+          to { transform: translateY(0) scale(1); opacity: 1; }
+        }
+        .bj-cut-deck {
+          position: relative;
+          height: 120px;
+          margin: 8px 0 18px;
+          border-radius: 14px;
+          cursor: crosshair;
+          touch-action: manipulation;
+          overflow: hidden;
+          border: 1.5px solid rgba(232,223,199,0.22);
+          background: radial-gradient(ellipse at 50% 60%, #0a3d2c 0%, #041810 75%);
+          box-shadow: inset 0 0 40px rgba(0,0,0,0.45);
+        }
+        .bj-cut-deck:focus-visible {
+          outline: 2px solid var(--casino-accent, #C9A227);
+          outline-offset: 2px;
+        }
+        .bj-cut-deck-felt {
+          position: absolute;
+          inset: 0;
+          opacity: 0.35;
+          background:
+            repeating-linear-gradient(
+              90deg,
+              transparent 0 6px,
+              rgba(0,0,0,0.08) 6px 7px
+            );
+          pointer-events: none;
+        }
+        .bj-cut-spine {
+          position: absolute;
+          width: 38px;
+          height: 64px;
+          margin-left: -19px;
+          border-radius: 4px;
+          border: 1.5px solid rgba(201,162,39,0.55);
+          background:
+            linear-gradient(145deg, #127a52 0%, #0a4a32 48%, #062a1c 100%);
+          box-shadow:
+            1px 0 0 rgba(0,0,0,0.35),
+            0 4px 8px rgba(0,0,0,0.3);
+          pointer-events: none;
+        }
+        .bj-cut-spine::after {
+          content: "";
+          position: absolute;
+          inset: 5px 6px;
+          border: 1px solid rgba(201,162,39,0.35);
+          border-radius: 2px;
+          opacity: 0.7;
+        }
+        .bj-cut-wedge {
+          position: absolute;
+          top: 8px;
+          width: 14px;
+          height: 88px;
+          margin-left: -7px;
+          z-index: 80;
+          border-radius: 3px;
+          background: linear-gradient(180deg, #F8ECC0 0%, #C9A227 42%, #8F7014 100%);
+          box-shadow:
+            0 0 14px rgba(201,162,39,0.55),
+            0 6px 12px rgba(0,0,0,0.45);
+          pointer-events: none;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: left 0.05s linear;
+        }
+        .bj-cut-wedge.is-set {
+          box-shadow:
+            0 0 18px rgba(201,162,39,0.75),
+            0 6px 14px rgba(0,0,0,0.5);
+        }
+        .bj-cut-wedge-label {
+          writing-mode: vertical-rl;
+          transform: rotate(180deg);
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 11px;
+          letter-spacing: 0.14em;
+          color: rgba(26,26,26,0.85);
+        }
+        .bj-cut-hint {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: 'Inter', sans-serif;
+          font-size: 13px;
+          color: rgba(240,230,210,0.55);
+          pointer-events: none;
+          z-index: 90;
+          text-shadow: 0 1px 3px rgba(0,0,0,0.6);
+        }
+        .bj-cut-confirm {
+          width: 100%;
+          padding: 12px;
+          border: none;
+          border-radius: 10px;
+          font-family: 'Bebas Neue', sans-serif;
+          letter-spacing: 0.16em;
+          font-size: 20px;
+          background: #C9A227;
+          color: #1A1A1A;
+          cursor: pointer;
+          box-shadow: 0 4px 0 #8A6E1B;
+        }
+        .bj-cut-confirm:disabled {
+          opacity: 0.4;
+          cursor: default;
+          box-shadow: none;
+          transform: translateY(4px);
+        }
         .bj-table {
           width: 100%;
           height: min(560px, 62dvh);
@@ -2542,6 +3620,7 @@ export default function BlackjackGame() {
           .bj-casino-tag { margin-top: 0; gap: 6px; }
           .bj-casino-tag-text { font-size: 11px; }
           .bj-casino-change { width: 24px; height: 24px; font-size: 12px; }
+          .bj-settings-gear { width: 24px; height: 24px; }
           .bj-table {
             border-radius: 16px 16px 40px 40px;
             border-width: 6px;
@@ -2558,11 +3637,14 @@ export default function BlackjackGame() {
             inset: 4px;
           }
           .bj-dealer-row {
-            grid-template-columns: 8px 1fr 56px;
             min-height: 0;
           }
+          .bj-dealer-hand {
+            padding: 0 52px;
+          }
           .bj-dealer-row .bj-shoe {
-            margin-top: 0;
+            top: 0;
+            right: 0;
             transform: scale(0.82);
             transform-origin: top right;
           }
@@ -2606,19 +3688,19 @@ export default function BlackjackGame() {
           .bj-hand-score { font-size: 18px; }
           .bj-chip-spot,
           .bj-chip-spot-ph {
-            min-width: 84px !important;
+            min-width: 72px !important;
             min-height: 84px !important;
-            width: 84px !important;
-            padding: 12px 8px 8px !important;
+            width: 72px !important;
+            padding: 0 !important;
             transform: none;
             overflow: visible !important;
           }
           .bj-bet-amount { font-size: 12px; }
           .bj-select-chip {
-            width: 44px !important;
-            height: 44px !important;
+            width: 58px !important;
+            height: 58px !important;
             overflow: visible !important;
-            margin: 6px 3px !important;
+            margin: 4px 2px !important;
           }
           .bj-controls {
             padding: 12px 10px 10px !important;
@@ -2637,7 +3719,7 @@ export default function BlackjackGame() {
           .bj-card-back-motif { width: 8px; height: 8px; }
           .bj-cards {
             min-height: 62px !important;
-            padding-left: 10px !important;
+            padding-left: 0 !important;
           }
           .bj-shoe { width: 58px; height: 78px; }
           .bj-shoe-shell { width: 54px; height: 72px; }
@@ -2651,8 +3733,8 @@ export default function BlackjackGame() {
             gap: 8px !important;
           }
           .bj-select-chip {
-            width: 42px !important;
-            height: 42px !important;
+            width: 58px !important;
+            height: 58px !important;
           }
           .bj-bank-label { font-size: 10px !important; margin-bottom: 0 !important; }
           .bj-bank-value { font-size: 20px !important; }
@@ -2706,12 +3788,24 @@ export default function BlackjackGame() {
           <button
             type="button"
             className="bj-casino-change"
-            disabled={phase !== "betting" || shuffling}
+            disabled={phase !== "betting" || shuffling || shuffleStage !== "idle"}
             onClick={openCasinoPicker}
             aria-label="Switch casino"
             title="Switch casino"
           >
             ⇄
+          </button>
+          <button
+            type="button"
+            className="bj-settings-gear"
+            disabled={shuffleStage !== "idle"}
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Table settings"
+            title="Table settings"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden fill="currentColor">
+              <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.6.24-1.14.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.83 14.52a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.43.34.68.22l2.39-.96c.49.39 1.03.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.8c.24 0 .44-.18.49-.42l.36-2.54c.6-.24 1.14-.55 1.63-.94l2.39.96c.25.12.54.02.68-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" />
+            </svg>
           </button>
         </div>
 
@@ -2744,14 +3838,20 @@ export default function BlackjackGame() {
             </div>
             <DealerShoe
               remaining={shoeRemaining}
-              total={SHOE_SIZE}
-              shuffling={shuffling}
+              total={shoeSize}
+              shuffling={shuffling || shuffleStage === "riffling" || shuffleStage === "stacking"}
             />
           </div>
 
           <div className="bj-pays-banner" aria-hidden>
-            <div className="bj-pays-main">BLACKJACK PAYS 3 TO 2</div>
-            <div className="bj-pays-rules">DEALER MUST STAND ON ALL 17s</div>
+            <div className="bj-pays-main">
+              BLACKJACK PAYS {bjPayout === "6:5" ? "6 TO 5" : "3 TO 2"}
+            </div>
+            <div className="bj-pays-rules">
+              {hitSoft17
+                ? "DEALER HITS SOFT 17"
+                : "DEALER MUST STAND ON ALL 17s"}
+            </div>
           </div>
 
           <div className="bj-player-zone">
@@ -2785,6 +3885,7 @@ export default function BlackjackGame() {
                             phase === "settle" ? flyForHand(h.status) : "idle"
                           }
                           compact={compact || hands.length > 2}
+                          casinoName={casino.name}
                         />
                       );
                     })
@@ -2795,11 +3896,12 @@ export default function BlackjackGame() {
                         label={handCount === 1 ? "YOU" : `H${i + 1}`}
                         cards={[]}
                         totalLabel="—"
-                        bet={selectedChip}
+                        bet={betAmount}
                         active={false}
                         status="active"
                         compact={handCount >= 3}
                         ghost
+                        casinoName={casino.name}
                       />
                     ))}
               </div>
@@ -2821,30 +3923,93 @@ export default function BlackjackGame() {
             <div
               style={{
                 display: "flex",
-                gap: 10,
-                flexWrap: "wrap",
-                alignItems: "center",
-                padding: "4px 2px",
+                flexDirection: "column",
+                gap: 8,
+                minWidth: 0,
+                flex: 1,
               }}
             >
-              {CHIP_DENOMS.map((c) => (
-                <Chip
-                  key={c.value}
-                  {...c}
-                  size={46}
-                  selected={selectedChip === c.value}
-                  disabled={phase !== "betting"}
-                  onClick={() => {
-                    if (phase !== "betting") return;
-                    setSelectedChip(c.value);
-                    const maxHands = Math.max(
-                      1,
-                      Math.floor(bank / c.value) || 1
-                    );
-                    if (handCount > maxHands) setHandCount(maxHands);
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: "'Bebas Neue', sans-serif",
+                    fontSize: 13,
+                    letterSpacing: 1.5,
+                    color: "rgba(232,223,199,0.55)",
                   }}
-                />
-              ))}
+                >
+                  MIN ${casino.minBet}
+                  <span style={{ opacity: 0.55 }}> · </span>
+                  MAX ${casino.maxBet.toLocaleString()}
+                </span>
+                {phase === "betting" && (
+                  <button
+                    type="button"
+                    onClick={clearBet}
+                    disabled={betAmount === 0}
+                    style={{
+                      fontFamily: "'Bebas Neue', sans-serif",
+                      fontSize: 12,
+                      letterSpacing: 1.5,
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      border: `1px solid ${FELT.markDim}`,
+                      background: "transparent",
+                      color: FELT.mark,
+                      cursor: betAmount === 0 ? "default" : "pointer",
+                      opacity: betAmount === 0 ? 0.35 : 0.85,
+                    }}
+                  >
+                    CLEAR
+                  </button>
+                )}
+                <span
+                  style={{
+                    fontFamily: "'Bebas Neue', sans-serif",
+                    fontSize: 18,
+                    letterSpacing: 1,
+                    color: FELT.gold,
+                    marginLeft: "auto",
+                  }}
+                >
+                  BET ${betAmount.toLocaleString()}
+                </span>
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  padding: "2px 0",
+                }}
+              >
+                {tableChips.map((c) => {
+                  const next = betAmount + c.value;
+                  const wouldExceedMax = next > casino.maxBet;
+                  const wouldExceedBank = next * handCount > bank;
+                  const chipDisabled =
+                    phase !== "betting" || wouldExceedMax || wouldExceedBank;
+                  return (
+                    <Chip
+                      key={c.value}
+                      {...c}
+                      size={64}
+                      casinoName={casino.name}
+                      selected={lastChip === c.value && betAmount > 0}
+                      disabled={chipDisabled}
+                      onClick={() => addChipToBet(c.value)}
+                    />
+                  );
+                })}
+              </div>
             </div>
             <div style={{ textAlign: "right", flexShrink: 0 }}>
               <div
@@ -2966,7 +4131,7 @@ export default function BlackjackGame() {
                 }}
               >
                 Total bet ${totalStake}
-                {shoeRemaining <= RESHUFFLE_AT + 20 ? " · shoe low" : ""}
+                {shoeRemaining <= reshuffleAtRef.current + 20 ? " · shoe low" : ""}
               </div>
             </div>
           ) : null}
@@ -3048,7 +4213,10 @@ export default function BlackjackGame() {
               paddingBottom: 8,
             }}
           >
-            4-deck shoe · hands limited by bank
+            {deckCount}-deck shoe · BJ {bjPayout} ·{" "}
+            {hitSoft17 ? "H17" : "S17"}
+            {playerCut ? " · player cut" : ""}
+            {" · hands limited by bank"}
           </div>
         )}
       </div>
@@ -3066,6 +4234,29 @@ export default function BlackjackGame() {
           onQuery={setCasinoQuery}
         />
       ) : null}
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        bjPayout={bjPayout}
+        onBjPayout={setBjPayout}
+        hitSoft17={hitSoft17}
+        onHitSoft17={setHitSoft17}
+        deckCount={deckCount}
+        onDeckCount={handleDeckCountChange}
+        playerCut={playerCut}
+        onPlayerCut={setPlayerCut}
+        canEdit={canEditSettings}
+        onRestart={handleRestartGame}
+      />
+
+      {(shuffleStage === "riffling" || shuffleStage === "stacking") && (
+        <ShuffleCeremony decks={deckCount} stage={shuffleStage} />
+      )}
+
+      {shuffleStage === "cutting" && (
+        <CutOverlay onCut={completePlayerCut} />
+      )}
     </div>
   );
 }

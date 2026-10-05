@@ -189,9 +189,40 @@ function buildScriptStyle(index) {
   };
 }
 
+/** Table limits by theme + a few famous floors. */
+const THEME_LIMITS = {
+  coastal: { minBet: 5, maxBet: 300 },
+  mountain: { minBet: 5, maxBet: 500 },
+  desert: { minBet: 10, maxBet: 500 },
+  midnight: { minBet: 10, maxBet: 750 },
+  velvet: { minBet: 25, maxBet: 1000 },
+  neon: { minBet: 25, maxBet: 1500 },
+  goldrush: { minBet: 50, maxBet: 2500 },
+  jazz: { minBet: 50, maxBet: 5000 },
+};
+
+const FLOOR_LIMIT_OVERRIDES = {
+  NV: { minBet: 25, maxBet: 2500 }, // Vegas mid-strip
+  NJ: { minBet: 15, maxBet: 1000 }, // Atlantic City
+  NY: { minBet: 25, maxBet: 2000 },
+  LA: { minBet: 25, maxBet: 1500 },
+  CA: { minBet: 10, maxBet: 500 },
+  HI: { minBet: 5, maxBet: 200 },
+  TX: { minBet: 25, maxBet: 1000 },
+  FL: { minBet: 15, maxBet: 750 },
+};
+
+function limitsForCasino(c) {
+  return (
+    FLOOR_LIMIT_OVERRIDES[c.abbr] ||
+    THEME_LIMITS[c.theme] || { minBet: 10, maxBet: 500 }
+  );
+}
+
 export const CASINOS = CASINO_BASE.map((c, i) => ({
   ...c,
   script: buildScriptStyle(i),
+  ...limitsForCasino(c),
 }));
 
 export const DEFAULT_CASINO_ABBR = "NV";
