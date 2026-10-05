@@ -1,5 +1,12 @@
 import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, useId } from "react";
 import { CASINOS, getDefaultCasino, getCasinoTheme } from "./casinos.js";
+import {
+  sfx,
+  unlockAudio,
+  getSoundEnabled,
+  setSoundEnabled,
+  playSettleSounds,
+} from "./sounds.js";
 
 const FELT = {
   mark: "#E8DFC7",
@@ -97,9 +104,9 @@ const CHIP_DENOMS = [
 
 const DEFAULT_DECKS = 2;
 const STARTING_BANK = 1000;
-const DEAL_STEP_MS = 380;
-const DEAL_FLIGHT_MS = 360;
-const DEALER_DRAW_MS = 520;
+const DEAL_STEP_MS = 560;
+const DEAL_FLIGHT_MS = 480;
+const DEALER_DRAW_MS = 680;
 const CHIP_FLY_MS = 700;
 const SHUFFLE_MS = 2000;
 const SHUFFLE_DECK_MS = 850;
@@ -1725,6 +1732,8 @@ function SettingsPanel({
   onPlayerCut,
   autoDeal,
   onAutoDeal,
+  soundEnabled,
+  onSoundEnabled,
   sideBetsEnabled,
   onSideBetsEnabled,
   canEdit,
@@ -1748,165 +1757,208 @@ function SettingsPanel({
           </button>
         </div>
 
-        <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
-          <div className="bj-settings-label">Blackjack pays</div>
-          <div className="bj-settings-seg">
-            {["3:2", "6:5"].map((opt) => (
+        <div className="bj-settings-body">
+          <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
+            <div className="bj-settings-label">Blackjack pays</div>
+            <div className="bj-settings-seg">
+              {["3:2", "6:5"].map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  className={`bj-settings-seg-btn${bjPayout === opt ? " is-on" : ""}`}
+                  disabled={!canEdit}
+                  onClick={() => onBjPayout(opt)}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
+            <div className="bj-settings-label">Dealer on soft 17</div>
+            <div className="bj-settings-seg">
               <button
-                key={opt}
                 type="button"
-                className={`bj-settings-seg-btn${bjPayout === opt ? " is-on" : ""}`}
+                className={`bj-settings-seg-btn${!hitSoft17 ? " is-on" : ""}`}
                 disabled={!canEdit}
-                onClick={() => onBjPayout(opt)}
+                onClick={() => onHitSoft17(false)}
               >
-                {opt}
+                STAND
               </button>
-            ))}
-          </div>
-        </div>
-
-        <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
-          <div className="bj-settings-label">Dealer on soft 17</div>
-          <div className="bj-settings-seg">
-            <button
-              type="button"
-              className={`bj-settings-seg-btn${!hitSoft17 ? " is-on" : ""}`}
-              disabled={!canEdit}
-              onClick={() => onHitSoft17(false)}
-            >
-              STAND
-            </button>
-            <button
-              type="button"
-              className={`bj-settings-seg-btn${hitSoft17 ? " is-on" : ""}`}
-              disabled={!canEdit}
-              onClick={() => onHitSoft17(true)}
-            >
-              HIT
-            </button>
-          </div>
-        </div>
-
-        <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
-          <div className="bj-settings-label">Decks in shoe</div>
-          <div className="bj-settings-seg bj-settings-decks">
-            {DECK_OPTIONS.map((n) => (
               <button
-                key={n}
                 type="button"
-                className={`bj-settings-seg-btn${deckCount === n ? " is-on" : ""}`}
+                className={`bj-settings-seg-btn${hitSoft17 ? " is-on" : ""}`}
                 disabled={!canEdit}
-                onClick={() => onDeckCount(n)}
+                onClick={() => onHitSoft17(true)}
               >
-                {n}
+                HIT
               </button>
-            ))}
+            </div>
           </div>
-          <div className="bj-settings-hint">
-            Prefer 1–2 decks for short auto-deal sessions — the cut card ends the
-            shoe and opens analytics.
+
+          <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
+            <div className="bj-settings-label">Decks in shoe</div>
+            <div className="bj-settings-seg bj-settings-decks">
+              {DECK_OPTIONS.map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  className={`bj-settings-seg-btn${deckCount === n ? " is-on" : ""}`}
+                  disabled={!canEdit}
+                  onClick={() => onDeckCount(n)}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            <div className="bj-settings-hint">
+              Prefer 1–2 decks for short auto-deal sessions — the cut card ends the
+              shoe and opens analytics.
+            </div>
+          </div>
+
+          <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
+            <div className="bj-settings-label">Player cut</div>
+            <div className="bj-settings-seg">
+              <button
+                type="button"
+                className={`bj-settings-seg-btn${playerCut ? " is-on" : ""}`}
+                disabled={!canEdit}
+                onClick={() => onPlayerCut(true)}
+              >
+                ON
+              </button>
+              <button
+                type="button"
+                className={`bj-settings-seg-btn${!playerCut ? " is-on" : ""}`}
+                disabled={!canEdit}
+                onClick={() => onPlayerCut(false)}
+              >
+                OFF
+              </button>
+            </div>
+            <div className="bj-settings-hint">
+              On by default — before every new shoe you tap a spot in the deck to
+              place the cut card (no slider, no card count).
+            </div>
+          </div>
+
+          <div className="bj-settings-section">
+            <div className="bj-settings-label">Auto-deal</div>
+            <div className="bj-settings-seg">
+              <button
+                type="button"
+                className={`bj-settings-seg-btn${!autoDeal ? " is-on" : ""}`}
+                onClick={() => onAutoDeal(false)}
+              >
+                OFF
+              </button>
+              <button
+                type="button"
+                className={`bj-settings-seg-btn${autoDeal ? " is-on" : ""}`}
+                onClick={() => onAutoDeal(true)}
+              >
+                ON
+              </button>
+            </div>
+            <div className="bj-settings-hint">
+              After each settle, deals the next round with your current bet. You
+              still play the hand. Session ends at the cut card or when the bank
+              can’t cover the bet — then analytics open.
+            </div>
+          </div>
+
+          <div className="bj-settings-section">
+            <div className="bj-settings-label">Sound</div>
+            <div className="bj-settings-seg">
+              <button
+                type="button"
+                className={`bj-settings-seg-btn${!soundEnabled ? " is-on" : ""}`}
+                onClick={() => onSoundEnabled(false)}
+              >
+                OFF
+              </button>
+              <button
+                type="button"
+                className={`bj-settings-seg-btn${soundEnabled ? " is-on" : ""}`}
+                onClick={() => {
+                  onSoundEnabled(true);
+                  unlockAudio();
+                  sfx.click();
+                }}
+              >
+                ON
+              </button>
+            </div>
+            <div className="bj-settings-hint">
+              Soft table cues for chips, deals, shuffles, and outcomes.
+            </div>
+          </div>
+
+          <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
+            <div className="bj-settings-label">Side bets</div>
+            <div className="bj-settings-seg">
+              <button
+                type="button"
+                className={`bj-settings-seg-btn${!sideBetsEnabled ? " is-on" : ""}`}
+                disabled={!canEdit}
+                onClick={() => onSideBetsEnabled(false)}
+              >
+                OFF
+              </button>
+              <button
+                type="button"
+                className={`bj-settings-seg-btn${sideBetsEnabled ? " is-on" : ""}`}
+                disabled={!canEdit}
+                onClick={() => onSideBetsEnabled(true)}
+              >
+                ON
+              </button>
+            </div>
+            <div className="bj-settings-hint">
+              Optional Perfect Pairs and 21+3. When on, choose MAIN / PAIRS / 21+3
+              before tapping chips.
+            </div>
           </div>
         </div>
 
-        <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
-          <div className="bj-settings-label">Player cut</div>
-          <div className="bj-settings-seg">
+        <div className="bj-settings-foot">
+          {canEndSession ? (
             <button
               type="button"
-              className={`bj-settings-seg-btn${playerCut ? " is-on" : ""}`}
-              disabled={!canEdit}
-              onClick={() => onPlayerCut(true)}
+              className="bj-settings-restart"
+              style={{ borderColor: "rgba(232,223,199,0.45)", background: "transparent", color: "#F0E6D2" }}
+              onClick={onEndSession}
             >
-              ON
+              END SESSION · VIEW ANALYTICS
             </button>
-            <button
-              type="button"
-              className={`bj-settings-seg-btn${!playerCut ? " is-on" : ""}`}
-              disabled={!canEdit}
-              onClick={() => onPlayerCut(false)}
-            >
-              OFF
-            </button>
-          </div>
-          <div className="bj-settings-hint">
-            On by default — before every new shoe you tap a spot in the deck to
-            place the cut card (no slider, no card count).
-          </div>
-        </div>
+          ) : null}
 
-        <div className="bj-settings-section">
-          <div className="bj-settings-label">Auto-deal</div>
-          <div className="bj-settings-seg">
-            <button
-              type="button"
-              className={`bj-settings-seg-btn${!autoDeal ? " is-on" : ""}`}
-              onClick={() => onAutoDeal(false)}
-            >
-              OFF
-            </button>
-            <button
-              type="button"
-              className={`bj-settings-seg-btn${autoDeal ? " is-on" : ""}`}
-              onClick={() => onAutoDeal(true)}
-            >
-              ON
-            </button>
-          </div>
-          <div className="bj-settings-hint">
-            After each settle, deals the next round with your current bet. You
-            still play the hand. Session ends at the cut card or when the bank
-            can’t cover the bet — then analytics open.
-          </div>
-        </div>
-
-        <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
-          <div className="bj-settings-label">Side bets</div>
-          <div className="bj-settings-seg">
-            <button
-              type="button"
-              className={`bj-settings-seg-btn${!sideBetsEnabled ? " is-on" : ""}`}
-              disabled={!canEdit}
-              onClick={() => onSideBetsEnabled(false)}
-            >
-              OFF
-            </button>
-            <button
-              type="button"
-              className={`bj-settings-seg-btn${sideBetsEnabled ? " is-on" : ""}`}
-              disabled={!canEdit}
-              onClick={() => onSideBetsEnabled(true)}
-            >
-              ON
-            </button>
-          </div>
-          <div className="bj-settings-hint">
-            Optional Perfect Pairs and 21+3. When on, choose MAIN / PAIRS / 21+3
-            before tapping chips.
-          </div>
-        </div>
-
-        {canEndSession ? (
           <button
             type="button"
             className="bj-settings-restart"
-            style={{ borderColor: "rgba(232,223,199,0.45)", background: "transparent", color: "#F0E6D2" }}
-            onClick={onEndSession}
+            disabled={!canEdit}
+            onClick={onRestart}
           >
-            END SESSION · VIEW ANALYTICS
+            RESTART GAME
           </button>
-        ) : null}
-
-        <button
-          type="button"
-          className="bj-settings-restart"
-          disabled={!canEdit}
-          onClick={onRestart}
-        >
-          RESTART GAME
-        </button>
-        <div className="bj-settings-hint">
-          Resets the bank, reshuffles every deck half-and-half, loads the shoe,
-          then asks you to cut when Player cut is on.
+          <button
+            type="button"
+            className="bj-settings-restart"
+            style={{
+              borderColor: "rgba(232,223,199,0.35)",
+              background: "transparent",
+              color: "#F0E6D2",
+              boxShadow: "none",
+            }}
+            onClick={onClose}
+          >
+            DONE
+          </button>
+          <div className="bj-settings-hint">
+            Rule toggles apply on the next deal. Restart resets the bank and shoe.
+          </div>
         </div>
       </div>
     </div>
@@ -2169,6 +2221,7 @@ export default function BlackjackGame() {
   const [deckCount, setDeckCount] = useState(DEFAULT_DECKS);
   const [playerCut, setPlayerCut] = useState(true);
   const [autoDeal, setAutoDeal] = useState(false);
+  const [soundEnabled, setSoundOn] = useState(getSoundEnabled);
   const [sideBetsEnabled, setSideBetsEnabled] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
   const [phase, setPhase] = useState("betting");
@@ -2353,6 +2406,7 @@ export default function BlackjackGame() {
     else setBetAmount(nextMain);
 
     setLastChip(value);
+    sfx.chip();
     const maxHands = Math.max(1, Math.floor(bank / nextPerHand) || 1);
     if (handCount > maxHands) setHandCount(maxHands);
   };
@@ -2379,6 +2433,21 @@ export default function BlackjackGame() {
   const seatCount = phase === "betting" ? handCount : Math.max(hands.length, 1);
   const compact = seatCount >= 3;
   const manySeats = seatCount > 4;
+
+  const setSoundPreference = useCallback((on) => {
+    setSoundEnabled(on);
+    setSoundOn(on);
+  }, []);
+
+  useEffect(() => {
+    const unlock = () => unlockAudio();
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
 
   const setSideBetsOn = (on) => {
     setSideBetsEnabled(on);
@@ -2415,12 +2484,14 @@ export default function BlackjackGame() {
     shuffleLockRef.current = false;
     setShuffleStage("idle");
     setShuffling(false);
+    sfx.cut();
   }, []);
 
   /** Animate half/half riffle per deck → stack → optional cut. */
   const runShuffleCeremony = useCallback(
     ({ dealAfter = false, resetBank = false } = {}) => {
       clearTimers();
+      sfx.shuffle();
       shuffleLockRef.current = true;
       setSettingsOpen(false);
       setShuffling(true);
@@ -2506,6 +2577,7 @@ export default function BlackjackGame() {
       }));
       setDealerCards(dealer);
       dealerRef.current = dealer;
+      if (dealer.some((c) => c.flipping)) sfx.flip();
 
       const clearFlip = window.setTimeout(() => {
         const cleared = dealerRef.current.map((c) => ({ ...c, flipping: false }));
@@ -2547,6 +2619,7 @@ export default function BlackjackGame() {
         setHands(settled);
         handsRef.current = settled;
         setPhase("settle");
+        playSettleSounds(settled);
         const anyWin = settled.some(
           (h) => h.status === "won" || h.status === "blackjack"
         );
@@ -2616,6 +2689,7 @@ export default function BlackjackGame() {
         const next = [...dealerRef.current, extra[i]];
         dealerRef.current = next;
         setDealerCards(next);
+        sfx.deal();
         const t = window.setTimeout(() => revealExtra(i + 1), DEALER_DRAW_MS);
         timersRef.current.push(t);
       };
@@ -2805,6 +2879,7 @@ export default function BlackjackGame() {
         if (!drawn.card) return;
         shoeRef.current = drawn.shoe;
         syncShoeCount();
+        sfx.deal();
 
         if (step.to === "player") {
           const card = { ...drawn.card };
@@ -2903,6 +2978,7 @@ export default function BlackjackGame() {
     if (!drawn.card) return;
     shoeRef.current = drawn.shoe;
     syncShoeCount();
+    sfx.deal();
 
     const cards = [...hand.cards, drawn.card];
     const ev = evaluateHand(cards);
@@ -2922,6 +2998,9 @@ export default function BlackjackGame() {
     }));
     handsRef.current = nextHands;
     setHands(nextHands);
+
+    if (status === "bust") sfx.lose();
+    else if (flash === "twentyone") sfx.win();
 
     if (status === "bust" || status === "standing") {
       const delay = flash ? 700 : 400;
@@ -2951,11 +3030,13 @@ export default function BlackjackGame() {
     const nextBank = bankRef.current - hand.bet;
     setBank(nextBank);
     bankRef.current = nextBank;
+    sfx.chip();
 
     const drawn = drawFromShoe(shoeRef.current);
     if (!drawn.card) return;
     shoeRef.current = drawn.shoe;
     syncShoeCount();
+    sfx.deal();
 
     const cards = [...hand.cards, drawn.card];
     const ev = evaluateHand(cards);
@@ -2988,6 +3069,7 @@ export default function BlackjackGame() {
     const nextBank = bankRef.current - hand.bet;
     setBank(nextBank);
     bankRef.current = nextBank;
+    sfx.chip();
 
     const [c1, c2] = hand.cards;
     const splittingAces = c1.rank === "A" && c2.rank === "A";
@@ -2997,6 +3079,8 @@ export default function BlackjackGame() {
     const d2 = drawFromShoe(shoeRef.current);
     shoeRef.current = d2.shoe;
     syncShoeCount();
+    sfx.deal();
+    window.setTimeout(() => sfx.deal(), 180);
 
     const handA = {
       ...hand,
@@ -4074,25 +4158,51 @@ export default function BlackjackGame() {
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 16px 12px;
+          padding: 12px 12px max(12px, env(safe-area-inset-bottom, 0px));
+          overflow: hidden;
+          box-sizing: border-box;
         }
         .bj-settings-panel {
           width: min(420px, 100%);
+          max-height: min(92dvh, 720px);
           display: flex;
           flex-direction: column;
-          gap: 14px;
-          padding: 18px 16px 16px;
+          gap: 12px;
+          padding: 16px 14px 14px;
           border-radius: 18px;
           border: 1.5px solid rgba(232,223,199,0.28);
           background: radial-gradient(ellipse at 50% 0%, #0B4530 0%, #073024 55%, #052018 100%);
           box-shadow: 0 20px 50px rgba(0,0,0,0.5);
           font-family: 'Inter', sans-serif;
+          overflow: hidden;
+          min-height: 0;
+          box-sizing: border-box;
         }
         .bj-settings-head {
           display: flex;
           align-items: flex-start;
           justify-content: space-between;
           gap: 12px;
+          flex-shrink: 0;
+        }
+        .bj-settings-body {
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow-y: auto;
+          -webkit-overflow-scrolling: touch;
+          overscroll-behavior: contain;
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+          padding-right: 2px;
+        }
+        .bj-settings-foot {
+          flex-shrink: 0;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding-top: 10px;
+          border-top: 1px solid rgba(232,223,199,0.16);
         }
         .bj-settings-title {
           font-family: 'Bebas Neue', sans-serif;
@@ -5444,6 +5554,8 @@ export default function BlackjackGame() {
         onPlayerCut={setPlayerCut}
         autoDeal={autoDeal}
         onAutoDeal={setAutoDeal}
+        soundEnabled={soundEnabled}
+        onSoundEnabled={setSoundPreference}
         sideBetsEnabled={sideBetsEnabled}
         onSideBetsEnabled={setSideBetsOn}
         canEdit={canEditSettings}
