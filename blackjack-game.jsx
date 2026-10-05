@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, useId } from "react";
-import { CASINOS, getDefaultCasino, getCasinoTheme, getCasinoScript, SCRIPT_FONTS_QUERY } from "./casinos.js";
+import { CASINOS, getDefaultCasino, getCasinoTheme } from "./casinos.js";
 
 const FELT = {
   mark: "#E8DFC7",
@@ -139,7 +139,8 @@ function applyRoundToStats(stats, settledHands, bankAfter) {
   for (const h of settledHands) {
     next.hands += 1;
     next.totalWagered += h.bet || 0;
-    next.netProfit += h.profit || 0;
+    next.totalWagered += h.sideBets?.pairs || 0;
+    next.totalWagered += h.sideBets?.twentyOnePlus3 || 0;
     if (h.outcome === "blackjack" || h.status === "blackjack") {
       next.blackjacks += 1;
       next.wins += 1;
@@ -149,16 +150,13 @@ function applyRoundToStats(stats, settledHands, bankAfter) {
       next.pushes += 1;
     } else {
       next.losses += 1;
-      if (h.status === "bust" || h.outcome === "loss") {
-        /* bust counted below */
-      }
     }
     if (h.status === "bust") next.busts += 1;
   }
   next.endBank = bankAfter;
   next.peakBank = Math.max(next.peakBank, bankAfter);
   next.lowBank = Math.min(next.lowBank, bankAfter);
-  // Prefer bank delta for net so doubles/splits stay consistent
+  // Prefer bank delta for net so doubles/splits/side bets stay consistent
   next.netProfit = bankAfter - next.startBank;
   return next;
 }
@@ -451,8 +449,89 @@ function settleHand(hand, dealerEval, { bjPayout = "3:2" } = {}) {
   return { status: "push", credit: bet, profit: 0, outcome: "push" };
 }
 
-function OutcomeBanner({ outcome, compact = false }) {
-  if (!outcome) return null;
+function cardColor(suit) {
+  return suit === "H" || suit === "D" ? "red" : "black";
+}
+
+function pokerRank(rank) {
+  if (rank === "A") return 14;
+  if (rank === "K") return 13;
+  if (rank === "Q") return 12;
+  if (rank === "J") return 11;
+  return Number(rank);
+}
+
+/** Perfect Pairs: mixed 6:1, colored 12:1, perfect 25:1 */
+function evaluatePerfectPairs(cards) {
+  if (!cards || cards.length < 2) return null;
+  const [a, b] = cards;
+  if (a.rank !== b.rank) return null;
+  if (a.suit === b.suit) {
+    return { key: "perfect", mult: 25, label: "PERFECT PAIR", short: "PP 25:1" };
+  }
+  if (cardColor(a.suit) === cardColor(b.suit)) {
+    return { key: "colored", mult: 12, label: "COLORED PAIR", short: "PP 12:1" };
+  }
+  return { key: "mixed", mult: 6, label: "MIXED PAIR", short: "PP 6:1" };
+}
+
+/** 21+3 using player first two + dealer upcard. */
+function evaluateTwentyOnePlus3(playerCards, dealerUp) {
+  if (!playerCards || playerCards.length < 2 || !dealerUp) return null;
+  const three = [playerCards[0], playerCards[1], dealerUp];
+  const ranks = three.map((c) => pokerRank(c.rank)).sort((a, b) => a - b);
+  const suits = three.map((c) => c.suit);
+  const flush = suits[0] === suits[1] && suits[1] === suits[2];
+  const trips = ranks[0] === ranks[1] && ranks[1] === ranks[2];
+  const straightNormal = ranks[0] + 1 === ranks[1] && ranks[1] + 1 === ranks[2];
+  const straightWheel = ranks[0] === 2 && ranks[1] === 3 && ranks[2] === 14;
+  const straight = straightNormal || straightWheel;
+
+  if (flush && trips) {
+    return { key: "suitedTrips", mult: 100, label: "SUITED TRIPS", short: "21+3 100:1" };
+  }
+  if (flush && straight) {
+    return { key: "straightFlush", mult: 40, label: "STRAIGHT FLUSH", short: "21+3 40:1" };
+  }
+  if (trips) {
+    return { key: "trips", mult: 30, label: "THREE OF A KIND", short: "21+3 30:1" };
+  }
+  if (straight) {
+    return { key: "straight", mult: 10, label: "STRAIGHT", short: "21+3 10:1" };
+  }
+  if (flush) {
+    return { key: "flush", mult: 5, label: "FLUSH", short: "21+3 5:1" };
+  }
+  return null;
+}
+
+function settleSideBet(bet, result) {
+  if (!bet || bet <= 0) {
+    return { bet: 0, credit: 0, profit: 0, result: null, outcome: null };
+  }
+  if (!result) {
+    return { bet, credit: 0, profit: -bet, result: null, outcome: "loss" };
+  }
+  const profit = bet * result.mult;
+  return {
+    bet,
+    credit: bet + profit,
+    profit,
+    result,
+    outcome: "win",
+    label: result.label,
+    short: result.short,
+  };
+}
+
+const SIDE_BET_TARGETS = [
+  { id: "main", label: "MAIN", hint: "Blackjack bet" },
+  { id: "pairs", label: "PAIRS", hint: "6:1 · 12:1 · 25:1" },
+  { id: "twentyOnePlus3", label: "21+3", hint: "5:1 → 100:1" },
+];
+
+function OutcomeBanner({ outcome, compact = false, text: textOverride = null }) {
+  if (!outcome && !textOverride) return null;
   const map = {
     win: { text: "WIN", color: "#E8C547", glow: "rgba(232,197,71,0.55)" },
     blackjack: {
@@ -468,30 +547,26 @@ function OutcomeBanner({ outcome, compact = false }) {
       glow: "rgba(232,197,71,0.55)",
     },
   };
-  const cfg = map[outcome];
-  if (!cfg) return null;
+  const cfg = map[outcome] || map.win;
+  const displayText = textOverride || cfg.text;
+  const long = displayText.length > 8;
 
   return (
     <div
       className="bj-outcome-banner"
       style={{
         fontFamily: "'Bebas Neue', sans-serif",
-        fontSize: compact
-          ? outcome === "blackjack"
-            ? 18
-            : 22
-          : outcome === "blackjack"
-            ? 24
-            : 28,
-        letterSpacing: outcome === "blackjack" ? 2 : 4,
+        fontSize: compact ? (long ? 13 : 20) : long ? 18 : 28,
+        letterSpacing: long ? 1.2 : 4,
         color: cfg.color,
         textShadow: `0 0 14px ${cfg.glow}, 0 2px 4px rgba(0,0,0,0.65)`,
         animation: "outcomeBurst 0.55s cubic-bezier(0.2, 1.2, 0.3, 1) both",
         lineHeight: 1,
         textAlign: "center",
+        whiteSpace: "nowrap",
       }}
     >
-      {cfg.text}
+      {displayText}
     </div>
   );
 }
@@ -857,6 +932,14 @@ function FeltChip({
   offset = 0,
   casinoName = "Blackjack",
 }) {
+  // Light stack depth: show a bit more rim, soft shadow, tiny scale toward camera
+  const overlap = offset ? -Math.round(size * 0.68) : 0;
+  const lift = offset * 1.15;
+  const scale = 1 + offset * 0.014;
+  const shadowY = 2.5 + offset * 0.9;
+  const shadowBlur = 5 + offset * 0.7;
+  const shadowAlpha = 0.32 + offset * 0.05;
+
   return (
     <div
       aria-hidden
@@ -865,10 +948,12 @@ function FeltChip({
         position: "relative",
         width: size,
         height: size,
-        marginTop: offset ? -Math.round(size * 0.72) : 0,
+        marginTop: overlap,
         borderRadius: "50%",
         flexShrink: 0,
-        filter: `drop-shadow(0 ${2 + offset * 0.35}px ${5 + offset * 0.25}px rgba(0,0,0,0.55))`,
+        transform: `translateY(${-lift}px) scale(${scale})`,
+        transformOrigin: "50% 85%",
+        filter: `drop-shadow(0 ${shadowY}px ${shadowBlur}px rgba(0,0,0,${shadowAlpha}))`,
         zIndex: offset + 1,
       }}
     >
@@ -917,7 +1002,7 @@ function BetChipStack({
         display: "flex",
         flexDirection: "column-reverse",
         alignItems: "center",
-        width: size + 4,
+        width: size + 8,
         overflow: "visible",
         filter: "none",
         animation: anim
@@ -927,6 +1012,23 @@ function BetChipStack({
       }}
       title={`$${formatMoney(amount)}`}
     >
+      <div
+        className="bj-bet-stack-shadow"
+        aria-hidden
+        style={{
+          position: "absolute",
+          left: "50%",
+          bottom: Math.max(2, Math.round(size * 0.04)),
+          width: Math.round(size * 0.74),
+          height: Math.round(size * 0.16),
+          transform: "translateX(-50%)",
+          borderRadius: "50%",
+          background: "rgba(0,0,0,0.38)",
+          filter: "blur(4px)",
+          zIndex: 0,
+          pointerEvents: "none",
+        }}
+      />
       {chips.map((c, i) => (
         <FeltChip
           key={c.id}
@@ -954,6 +1056,9 @@ function FeltHand({
   cards,
   totalLabel,
   bet = 0,
+  sideBets = null,
+  sideResults = null,
+  sideChipFly = "idle",
   active = false,
   waiting = false,
   status = "active",
@@ -986,6 +1091,48 @@ function FeltHand({
         ? "to-player"
         : "idle";
   const flyingAway = chipFly === "to-dealer" || chipFly === "to-player";
+  const pairsBet = sideBets?.pairs || 0;
+  const plus3Bet = sideBets?.twentyOnePlus3 || 0;
+  const sideCleared = sideChipFly === "done";
+  const showSideStacks = !sideCleared && (pairsBet > 0 || plus3Bet > 0);
+  const bothSideWins =
+    sideResults?.pairs?.outcome === "win" &&
+    sideResults?.twentyOnePlus3?.outcome === "win";
+  const sideBannerText =
+    !sideCleared && sideChipFly !== "idle"
+      ? bothSideWins
+        ? "SIDE BETS!"
+        : sideResults?.pairs?.outcome === "win"
+          ? sideResults.pairs.short
+          : sideResults?.twentyOnePlus3?.outcome === "win"
+            ? sideResults.twentyOnePlus3.short
+            : null
+      : null;
+
+  const sideFlyFor = (outcome) => {
+    if (!outcome || sideChipFly === "idle" || sideChipFly === "done") return "idle";
+    if (outcome === "win") {
+      if (sideChipFly === "pay") return "from-dealer";
+      if (sideChipFly === "collect") return "to-player";
+      return "idle";
+    }
+    if (outcome === "loss") {
+      if (sideChipFly === "collect" || sideChipFly === "pay") return "to-dealer";
+      return "idle";
+    }
+    return "idle";
+  };
+
+  const pairsFly = sideFlyFor(sideResults?.pairs?.outcome);
+  const plus3Fly = sideFlyFor(sideResults?.twentyOnePlus3?.outcome);
+  const pairsPayAmt =
+    sideResults?.pairs?.outcome === "win"
+      ? Math.max(0, (sideResults.pairs.credit || 0) - pairsBet)
+      : 0;
+  const plus3PayAmt =
+    sideResults?.twentyOnePlus3?.outcome === "win"
+      ? Math.max(0, (sideResults.twentyOnePlus3.credit || 0) - plus3Bet)
+      : 0;
 
   const total = (
     <div
@@ -1039,7 +1186,7 @@ function FeltHand({
       style={{
         width: compact ? 78 : 92,
         minWidth: compact ? 78 : 92,
-        minHeight: compact ? 88 : 104,
+        minHeight: compact ? 100 : 128,
         visibility: "hidden",
         pointerEvents: "none",
         flexShrink: 0,
@@ -1048,7 +1195,7 @@ function FeltHand({
   );
 
   const chipSpot =
-    bet > 0 && !chipsCleared ? (
+    (bet > 0 || showSideStacks) && !chipsCleared ? (
       <div
         className={`bj-chip-spot${active ? " is-active" : ""}${flyingAway ? " is-clearing" : ""}`}
         style={{
@@ -1057,9 +1204,9 @@ function FeltHand({
           alignItems: "center",
           justifyContent: "flex-end",
           gap: 4,
-          width: compact ? 78 : 92,
-          minWidth: compact ? 78 : 92,
-          minHeight: compact ? 88 : 104,
+          width: compact ? (showSideStacks ? 110 : 78) : showSideStacks ? 130 : 92,
+          minWidth: compact ? (showSideStacks ? 110 : 78) : showSideStacks ? 130 : 92,
+          minHeight: compact ? 100 : 128,
           padding: 0,
           boxSizing: "border-box",
           overflow: "visible",
@@ -1075,34 +1222,80 @@ function FeltHand({
             display: "flex",
             alignItems: "flex-end",
             justifyContent: "center",
-            gap: 8,
-            minHeight: compact ? 70 : 82,
+            gap: compact ? 4 : 6,
+            minHeight: compact ? 84 : 108,
             position: "relative",
             zIndex: 1,
             overflow: "visible",
           }}
         >
-          <BetChipStack
-            key={`bet-${betFly}-${chipFly}`}
-            amount={bet}
-            fly={betFly}
-            size={compact ? 70 : 82}
-            casinoName={casinoName}
-          />
+          {showSideStacks && pairsBet > 0 && (
+            <div className="bj-side-stack" title={`Pairs $${formatMoney(pairsBet)}`}>
+              {pairsPayAmt > 0 &&
+                (sideChipFly === "pay" || sideChipFly === "collect") && (
+                  <BetChipStack
+                    key={`pp-pay-${sideChipFly}`}
+                    amount={pairsPayAmt}
+                    fly={pairsFly === "from-dealer" ? "from-dealer" : pairsFly}
+                    size={compact ? 34 : 40}
+                    casinoName={casinoName}
+                  />
+                )}
+              <BetChipStack
+                key={`pp-${pairsFly}-${sideChipFly}`}
+                amount={pairsBet}
+                fly={pairsFly === "from-dealer" ? "idle" : pairsFly}
+                size={compact ? 34 : 40}
+                casinoName={casinoName}
+              />
+              <div className="bj-side-tag">PP</div>
+            </div>
+          )}
+          {bet > 0 && (
+            <BetChipStack
+              key={`bet-${betFly}-${chipFly}`}
+              amount={bet}
+              fly={betFly}
+              size={compact ? 64 : 78}
+              casinoName={casinoName}
+            />
+          )}
           {showPayStack && (
             <BetChipStack
               key={`pay-${payFly}-${chipFly}`}
               amount={payoutAmount}
               fly={payFly}
-              size={compact ? 70 : 82}
+              size={compact ? 64 : 78}
               delay={40}
               casinoName={casinoName}
             />
           )}
+          {showSideStacks && plus3Bet > 0 && (
+            <div className="bj-side-stack" title={`21+3 $${formatMoney(plus3Bet)}`}>
+              {plus3PayAmt > 0 &&
+                (sideChipFly === "pay" || sideChipFly === "collect") && (
+                  <BetChipStack
+                    key={`p3-pay-${sideChipFly}`}
+                    amount={plus3PayAmt}
+                    fly={plus3Fly === "from-dealer" ? "from-dealer" : plus3Fly}
+                    size={compact ? 34 : 40}
+                    casinoName={casinoName}
+                  />
+                )}
+              <BetChipStack
+                key={`p3-${plus3Fly}-${sideChipFly}`}
+                amount={plus3Bet}
+                fly={plus3Fly === "from-dealer" ? "idle" : plus3Fly}
+                size={compact ? 34 : 40}
+                casinoName={casinoName}
+              />
+              <div className="bj-side-tag">21+3</div>
+            </div>
+          )}
         </div>
         {!flyingAway && (
           <div className="bj-bet-amount" style={{ position: "relative", zIndex: 1 }}>
-            ${formatMoney(bet)}
+            ${formatMoney(bet + (showSideStacks ? pairsBet + plus3Bet : 0))}
           </div>
         )}
       </div>
@@ -1111,8 +1304,18 @@ function FeltHand({
     );
 
   const payoutTag =
-    flash || (outcome && chipFly === "done") ? (
-      <OutcomeBanner outcome={flash || outcome} compact={compact} />
+    flash || sideBannerText || (outcome && chipFly === "done") ? (
+      <OutcomeBanner
+        outcome={flash || (sideBannerText ? "win" : outcome)}
+        text={
+          flash
+            ? null
+            : sideBannerText && !(outcome && chipFly === "done")
+              ? sideBannerText
+              : null
+        }
+        compact={compact}
+      />
     ) : (
       <div className="bj-outcome-ph" aria-hidden />
     );
@@ -1138,7 +1341,6 @@ function FeltHand({
         </>
       ) : (
         <>
-          {/* Chip circle sits toward the dealer; cards rest below toward the player */}
           {chipSpot}
           {cardRow}
           {total}
@@ -1148,6 +1350,7 @@ function FeltHand({
     </div>
   );
 }
+
 
 function Chip({
   value,
@@ -1522,6 +1725,8 @@ function SettingsPanel({
   onPlayerCut,
   autoDeal,
   onAutoDeal,
+  sideBetsEnabled,
+  onSideBetsEnabled,
   canEdit,
   onRestart,
   onEndSession,
@@ -1651,6 +1856,32 @@ function SettingsPanel({
             After each settle, deals the next round with your current bet. You
             still play the hand. Session ends at the cut card or when the bank
             can’t cover the bet — then analytics open.
+          </div>
+        </div>
+
+        <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
+          <div className="bj-settings-label">Side bets</div>
+          <div className="bj-settings-seg">
+            <button
+              type="button"
+              className={`bj-settings-seg-btn${!sideBetsEnabled ? " is-on" : ""}`}
+              disabled={!canEdit}
+              onClick={() => onSideBetsEnabled(false)}
+            >
+              OFF
+            </button>
+            <button
+              type="button"
+              className={`bj-settings-seg-btn${sideBetsEnabled ? " is-on" : ""}`}
+              disabled={!canEdit}
+              onClick={() => onSideBetsEnabled(true)}
+            >
+              ON
+            </button>
+          </div>
+          <div className="bj-settings-hint">
+            Optional Perfect Pairs and 21+3. When on, choose MAIN / PAIRS / 21+3
+            before tapping chips.
           </div>
         </div>
 
@@ -1938,10 +2169,14 @@ export default function BlackjackGame() {
   const [deckCount, setDeckCount] = useState(DEFAULT_DECKS);
   const [playerCut, setPlayerCut] = useState(true);
   const [autoDeal, setAutoDeal] = useState(false);
+  const [sideBetsEnabled, setSideBetsEnabled] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
   const [phase, setPhase] = useState("betting");
   const [betAmount, setBetAmount] = useState(() => getDefaultCasino().minBet);
   const [lastChip, setLastChip] = useState(() => getDefaultCasino().minBet);
+  const [sideBetPairs, setSideBetPairs] = useState(0);
+  const [sideBet213, setSideBet213] = useState(0);
+  const [betTarget, setBetTarget] = useState("main");
   const [handCount, setHandCount] = useState(1);
   const [bank, setBank] = useState(STARTING_BANK);
   const [sessionStats, setSessionStats] = useState(() =>
@@ -1953,8 +2188,10 @@ export default function BlackjackGame() {
   const [activeHandIndex, setActiveHandIndex] = useState(0);
   const shoeSize = deckCount * 52;
   const [shoeRemaining, setShoeRemaining] = useState(0);
-  /** idle | pay | collect | done */
+  /** idle | pay | collect | done — main bet settle */
   const [chipFlyPhase, setChipFlyPhase] = useState("idle");
+  /** idle | pay | collect | done — side bets resolve right after the deal */
+  const [sideChipFly, setSideChipFly] = useState("idle");
   const [shuffling, setShuffling] = useState(false);
   /** idle | riffling | stacking | cutting */
   const [shuffleStage, setShuffleStage] = useState("idle");
@@ -2072,11 +2309,14 @@ export default function BlackjackGame() {
     [casino.minBet, casino.maxBet]
   );
 
+  const effectivePairs = sideBetsEnabled ? sideBetPairs : 0;
+  const effective213 = sideBetsEnabled ? sideBet213 : 0;
+  const perHandCost = betAmount + effectivePairs + effective213;
   const maxAffordableHands = Math.max(
     1,
-    betAmount > 0 ? Math.floor(bank / betAmount) : 1
+    perHandCost > 0 ? Math.floor(bank / perHandCost) : 1
   );
-  const totalStake = betAmount * handCount;
+  const totalStake = perHandCost * handCount;
   const canAffordDeal =
     bank >= totalStake &&
     betAmount >= casino.minBet &&
@@ -2087,19 +2327,50 @@ export default function BlackjackGame() {
 
   const addChipToBet = (value) => {
     if (phase !== "betting" || shuffling) return;
-    const next = betAmount + value;
-    if (next > casino.maxBet) return;
-    if (next * handCount > bank) return;
-    setBetAmount(next);
+    const target = sideBetsEnabled ? betTarget : "main";
+    const pairs = sideBetPairs;
+    const plus3 = sideBet213;
+    let nextMain = betAmount;
+    let nextPairs = pairs;
+    let nextPlus3 = plus3;
+
+    if (target === "pairs") {
+      nextPairs = pairs + value;
+      if (nextPairs > casino.maxBet) return;
+    } else if (target === "twentyOnePlus3") {
+      nextPlus3 = plus3 + value;
+      if (nextPlus3 > casino.maxBet) return;
+    } else {
+      nextMain = betAmount + value;
+      if (nextMain > casino.maxBet) return;
+    }
+
+    const nextPerHand = nextMain + nextPairs + nextPlus3;
+    if (nextPerHand * handCount > bank) return;
+
+    if (target === "pairs") setSideBetPairs(nextPairs);
+    else if (target === "twentyOnePlus3") setSideBet213(nextPlus3);
+    else setBetAmount(nextMain);
+
     setLastChip(value);
-    const maxHands = Math.max(1, Math.floor(bank / next) || 1);
+    const maxHands = Math.max(1, Math.floor(bank / nextPerHand) || 1);
     if (handCount > maxHands) setHandCount(maxHands);
   };
 
   const clearBet = () => {
     if (phase !== "betting" || shuffling) return;
-    setBetAmount(0);
+    const target = sideBetsEnabled ? betTarget : "main";
+    if (target === "pairs") setSideBetPairs(0);
+    else if (target === "twentyOnePlus3") setSideBet213(0);
+    else setBetAmount(0);
   };
+
+  const activeSideAmount =
+    sideBetsEnabled && betTarget === "pairs"
+      ? sideBetPairs
+      : sideBetsEnabled && betTarget === "twentyOnePlus3"
+        ? sideBet213
+        : betAmount;
 
   const canEditSettings =
     phase === "betting" && !shuffling && shuffleStage === "idle";
@@ -2107,6 +2378,16 @@ export default function BlackjackGame() {
   const revealHole = phase === "dealer" || phase === "settle";
   const seatCount = phase === "betting" ? handCount : Math.max(hands.length, 1);
   const compact = seatCount >= 3;
+  const manySeats = seatCount > 4;
+
+  const setSideBetsOn = (on) => {
+    setSideBetsEnabled(on);
+    if (!on) {
+      setSideBetPairs(0);
+      setSideBet213(0);
+      setBetTarget("main");
+    }
+  };
 
   const dealerTotal = useMemo(() => {
     if (dealerCards.length === 0) return "—";
@@ -2150,6 +2431,7 @@ export default function BlackjackGame() {
       setDealerCards([]);
       dealerRef.current = [];
       setChipFlyPhase("idle");
+      setSideChipFly("idle");
       setPhase("betting");
       setActiveHandIndex(0);
       setPendingDealAfterShuffle(dealAfter);
@@ -2302,6 +2584,7 @@ export default function BlackjackGame() {
               ...h,
               bet: 0,
               payoutAmount: 0,
+              sideBets: { pairs: 0, twentyOnePlus3: 0 },
             }));
             handsRef.current = cleared;
             return cleared;
@@ -2366,25 +2649,85 @@ export default function BlackjackGame() {
 
   const beginPlayerPhase = useCallback(
     (dealtHands, dealtDealer) => {
+      const dealerUp =
+        dealtDealer.find((c) => !c.faceDown) || dealtDealer[0] || null;
       const dealerPeekBJ = evaluateHand(
         dealtDealer.map((c) => ({ ...c, faceDown: false }))
       ).blackjack;
 
+      let sideCreditTotal = 0;
+      let anySideBet = false;
+      let anySideWin = false;
       let nextHands = dealtHands.map((h) => {
+        const pairsRes = settleSideBet(
+          h.sideBets?.pairs || 0,
+          evaluatePerfectPairs(h.cards)
+        );
+        const plus3Res = settleSideBet(
+          h.sideBets?.twentyOnePlus3 || 0,
+          evaluateTwentyOnePlus3(h.cards, dealerUp)
+        );
+        sideCreditTotal += pairsRes.credit + plus3Res.credit;
+        if ((h.sideBets?.pairs || 0) > 0 || (h.sideBets?.twentyOnePlus3 || 0) > 0) {
+          anySideBet = true;
+        }
+        if (pairsRes.outcome === "win" || plus3Res.outcome === "win") {
+          anySideWin = true;
+        }
+
         const ev = evaluateHand(h.cards);
-        // Natural blackjack — auto-resolved (paid at settle unless dealer BJ)
+        let status = "active";
+        let flash = null;
         if (ev.blackjack && !h.fromSplit) {
-          return { ...h, status: "blackjack", flash: "blackjack" };
+          status = "blackjack";
+          flash = "blackjack";
+        } else if (ev.total === 21) {
+          status = "standing";
+          flash = "twentyone";
         }
-        // Any 21 — no decisions left; auto-stand
-        if (ev.total === 21) {
-          return { ...h, status: "standing", flash: "twentyone" };
-        }
-        return { ...h, status: "active", flash: null };
+
+        return {
+          ...h,
+          status,
+          flash,
+          sideResults: { pairs: pairsRes, twentyOnePlus3: plus3Res },
+        };
       });
+
+      if (sideCreditTotal > 0) {
+        const nextBank = bankRef.current + sideCreditTotal;
+        bankRef.current = nextBank;
+        setBank(nextBank);
+      }
 
       handsRef.current = nextHands;
       setHands(nextHands);
+
+      // Side bets pay/collect immediately — don't wait for the main hand.
+      if (anySideBet) {
+        if (anySideWin) setSideChipFly("pay");
+        else setSideChipFly("collect");
+
+        const sideCollectDelay = anySideWin ? CHIP_FLY_MS + 80 : 30;
+        if (anySideWin) {
+          const payT = window.setTimeout(() => setSideChipFly("collect"), sideCollectDelay);
+          timersRef.current.push(payT);
+        }
+        const clearT = window.setTimeout(() => {
+          setHands((prev) => {
+            const cleared = prev.map((h) => ({
+              ...h,
+              sideBets: { pairs: 0, twentyOnePlus3: 0 },
+            }));
+            handsRef.current = cleared;
+            return cleared;
+          });
+          setSideChipFly("done");
+        }, sideCollectDelay + CHIP_FLY_MS + 60);
+        timersRef.current.push(clearT);
+      } else {
+        setSideChipFly("idle");
+      }
 
       // Clear 21 / BJ flash after a beat
       const flashClear = window.setTimeout(() => {
@@ -2417,7 +2760,9 @@ export default function BlackjackGame() {
   );
 
   const runDeal = useCallback(() => {
-    const stake = betAmount * handCount;
+    const pairs = sideBetsEnabled ? sideBetPairs : 0;
+    const plus3 = sideBetsEnabled ? sideBet213 : 0;
+    const stake = (betAmount + pairs + plus3) * handCount;
     const nextBank = bankRef.current - stake;
     setBank(nextBank);
     bankRef.current = nextBank;
@@ -2426,6 +2771,11 @@ export default function BlackjackGame() {
       id: nextHandId(),
       cards: [],
       bet: betAmount,
+      sideBets: {
+        pairs,
+        twentyOnePlus3: plus3,
+      },
+      sideResults: null,
       status: "active",
       fromSplit: false,
       splitAces: false,
@@ -2437,6 +2787,7 @@ export default function BlackjackGame() {
     setDealerCards([]);
     dealerRef.current = [];
     setChipFlyPhase("idle");
+    setSideChipFly("idle");
     setPhase("dealing");
     setActiveHandIndex(0);
 
@@ -2476,7 +2827,7 @@ export default function BlackjackGame() {
       beginPlayerPhase(workingHands, workingDealer);
     }, DEAL_STEP_MS * (sequence.length + 1));
     timersRef.current.push(doneId);
-  }, [betAmount, handCount, beginPlayerPhase]);
+  }, [betAmount, sideBetPairs, sideBet213, sideBetsEnabled, handCount, beginPlayerPhase]);
 
   useEffect(() => {
     if (!pendingDealAfterShuffle) return;
@@ -2657,6 +3008,8 @@ export default function BlackjackGame() {
       fromSplit: true,
       splitAces: splittingAces,
       status: splittingAces ? "standing" : "active",
+      // Side bets already resolved on the original two cards
+      sideBets: { pairs: 0, twentyOnePlus3: 0 },
     };
     const handB = {
       id: nextHandId(),
@@ -2665,6 +3018,8 @@ export default function BlackjackGame() {
         { ...d2.card, fromSplitHand: true },
       ],
       bet: hand.bet,
+      sideBets: { pairs: 0, twentyOnePlus3: 0 },
+      sideResults: null,
       fromSplit: true,
       splitAces: splittingAces,
       status: splittingAces ? "standing" : "active",
@@ -2756,7 +3111,8 @@ export default function BlackjackGame() {
         ? betAmount
         : casino.minBet;
     if (nextBet !== betAmount) setBetAmount(nextBet);
-    const maxHands = Math.max(1, Math.floor(nextBank / nextBet) || 1);
+    const nextPerHand = nextBet + sideBetPairs + sideBet213;
+    const maxHands = Math.max(1, Math.floor(nextBank / Math.max(1, nextPerHand)) || 1);
     if (handCount > maxHands) setHandCount(maxHands);
     setHands([]);
     handsRef.current = [];
@@ -2764,6 +3120,7 @@ export default function BlackjackGame() {
     dealerRef.current = [];
     setActiveHandIndex(0);
     setChipFlyPhase("idle");
+    setSideChipFly("idle");
     setPhase("betting");
   };
 
@@ -2775,7 +3132,9 @@ export default function BlackjackGame() {
     if (chipFlyPhase !== "done") return;
     if (shuffling || shuffleStage !== "idle") return;
 
-    const stake = Math.max(casino.minBet, betAmount) * Math.max(1, handCount);
+    const stake =
+      Math.max(casino.minBet, betAmount + effectivePairs + effective213) *
+      Math.max(1, handCount);
     const bankNow = bankRef.current;
     const shoeLow = shoeRef.current.length <= reshuffleAtRef.current;
 
@@ -2793,7 +3152,8 @@ export default function BlackjackGame() {
       handleNewRound();
       const dealT = window.setTimeout(() => {
         if (!autoDealRef.current || analyticsOpenRef.current) return;
-        if (bankRef.current < betAmount * handCount) {
+        const cost = (betAmount + effectivePairs + effective213) * handCount;
+        if (bankRef.current < cost) {
           endSessionRef.current("bank");
           return;
         }
@@ -2818,6 +3178,9 @@ export default function BlackjackGame() {
     shuffling,
     shuffleStage,
     betAmount,
+    sideBetPairs,
+    sideBet213,
+    sideBetsEnabled,
     handCount,
     casino.minBet,
   ]);
@@ -2856,6 +3219,9 @@ export default function BlackjackGame() {
     setDraftCasino(c);
     setPickingCasino(false);
     setBetAmount(c.minBet);
+    setSideBetPairs(0);
+    setSideBet213(0);
+    setBetTarget("main");
     const tray = chipsForTable(c.minBet, c.maxBet);
     setLastChip(tray[0]?.value ?? c.minBet);
     const maxHands = Math.max(1, Math.floor(bank / c.minBet) || 1);
@@ -2863,19 +3229,20 @@ export default function BlackjackGame() {
   };
 
   const theme = getCasinoTheme(casino);
-  const script = getCasinoScript(casino);
 
   return (
     <div
       className="bj-page"
       data-theme={theme.id}
       style={{
+        height: "100dvh",
         minHeight: "100dvh",
+        maxHeight: "100dvh",
         background: `radial-gradient(ellipse at center, ${theme.page1} 0%, ${theme.page2} 70%, ${theme.page3} 100%)`,
         display: "flex",
-        alignItems: "flex-start",
+        alignItems: "stretch",
         justifyContent: "center",
-        padding: 12,
+        padding: "8px 10px calc(8px + env(safe-area-inset-bottom, 0px))",
         fontFamily: "'Inter', sans-serif",
         boxSizing: "border-box",
         "--casino-accent": theme.accent,
@@ -2883,10 +3250,11 @@ export default function BlackjackGame() {
         "--felt-2": theme.felt2,
         "--felt-3": theme.felt3,
         transition: "background 0.55s ease",
+        overflow: "hidden",
       }}
     >
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&${SCRIPT_FONTS_QUERY}&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700&display=swap');
         *, *::before, *::after { box-sizing: border-box; }
         @keyframes cardDeal {
           0% { opacity: 0; transform: translate(60px, -80px) rotate(-16deg) scale(0.8); }
@@ -3397,26 +3765,66 @@ export default function BlackjackGame() {
           flex-direction: column;
           align-items: center;
           justify-content: center;
-          gap: 2px;
-          margin: 0;
+          gap: 4px;
+          margin: 8px 0;
           pointer-events: none;
           text-align: center;
-          min-height: 42px;
+          min-height: 64px;
           flex-shrink: 0;
+          padding: 8px 20px;
+          width: 100%;
+          max-width: 100%;
+          box-sizing: border-box;
+          overflow: visible;
+        }
+        .bj-table-brand {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: clamp(22px, 4.2vw, 40px);
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          line-height: 1.05;
+          text-transform: uppercase;
+          color: var(--casino-accent, #C9A227);
+          text-shadow:
+            0 1px 0 rgba(255,255,255,0.12),
+            0 2px 0 rgba(0,0,0,0.35),
+            0 8px 24px color-mix(in srgb, var(--casino-accent, #C9A227) 35%, transparent);
+          width: 100%;
+          max-width: 100%;
+          padding: 0 8px;
+          box-sizing: border-box;
+          overflow: visible;
+          white-space: normal;
+          overflow-wrap: anywhere;
+          word-break: break-word;
+          hyphens: auto;
+        }
+        .bj-table-brand-rule {
+          width: min(220px, 42vw);
+          height: 2px;
+          border-radius: 2px;
+          background: linear-gradient(
+            90deg,
+            transparent 0%,
+            color-mix(in srgb, var(--casino-accent, #C9A227) 75%, #F0E6D2) 50%,
+            transparent 100%
+          );
+          opacity: 0.85;
+          margin: 2px 0 1px;
         }
         .bj-pays-main {
           font-family: 'Bebas Neue', sans-serif;
-          font-size: clamp(18px, 4.5vw, 28px);
-          letter-spacing: 0.18em;
-          color: color-mix(in srgb, var(--casino-accent) 88%, #F0E6D2);
+          font-size: clamp(13px, 3vw, 18px);
+          letter-spacing: 0.16em;
+          color: rgba(232,223,199,0.72);
           text-shadow: 0 1px 0 rgba(0,0,0,0.35);
           white-space: nowrap;
         }
         .bj-pays-rules {
           font-family: 'Bebas Neue', sans-serif;
-          font-size: clamp(11px, 2.8vw, 14px);
-          letter-spacing: 0.14em;
-          color: rgba(232,223,199,0.5);
+          font-size: clamp(10px, 2.4vw, 13px);
+          letter-spacing: 0.12em;
+          color: rgba(232,223,199,0.45);
           white-space: nowrap;
         }
         .bj-hand {
@@ -3567,34 +3975,47 @@ export default function BlackjackGame() {
           outline-offset: 2px;
         }
         .bj-shell {
-          width: min(920px, 100%);
+          width: min(1080px, 100%);
+          height: 100%;
+          min-height: 0;
           display: flex;
           flex-direction: column;
-          align-items: center;
-          gap: 12px;
+          align-items: stretch;
+          gap: 8px;
         }
-        .bj-title {
-          font-family: 'Bebas Neue', sans-serif;
-          font-size: clamp(28px, 8vw, 44px);
-          letter-spacing: 0.18em;
-          color: #F0E6D2;
-          text-shadow: 0 2px 4px rgba(0,0,0,0.4);
-          text-align: center;
-        }
+        .bj-title,
         .bj-casino-tag {
+          display: none;
+        }
+        .bj-controls-meta {
           display: flex;
           align-items: center;
-          justify-content: center;
-          gap: 8px;
-          flex-wrap: wrap;
-          margin-top: -4px;
+          justify-content: space-between;
+          gap: 10px;
+          width: 100%;
+          min-width: 0;
         }
-        .bj-casino-tag-text {
-          font-size: clamp(12px, 3.2vw, 14px);
+        .bj-casino-pill {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          min-width: 0;
+          max-width: min(100%, 440px);
+          padding: 3px 3px 3px 10px;
+          border-radius: 999px;
+          border: 1px solid color-mix(in srgb, var(--casino-accent, #C9A227) 35%, rgba(232,223,199,0.22));
+          background: rgba(0,0,0,0.22);
+        }
+        .bj-casino-pill-text {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          font-size: 12px;
+          letter-spacing: 0.02em;
           color: rgba(232,223,199,0.72);
-          text-align: center;
         }
-        .bj-casino-tag-name {
+        .bj-casino-pill-name {
           color: var(--casino-accent, #C9A227);
           font-weight: 600;
         }
@@ -3613,6 +4034,7 @@ export default function BlackjackGame() {
           display: inline-flex;
           align-items: center;
           justify-content: center;
+          flex-shrink: 0;
         }
         .bj-casino-change:disabled {
           opacity: 0.35;
@@ -3773,6 +4195,59 @@ export default function BlackjackGame() {
           box-shadow: 0 0 10px color-mix(in srgb, var(--casino-accent, #C9A227) 45%, transparent);
           pointer-events: none;
           z-index: 2;
+        }
+        .bj-bet-targets {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+        }
+        .bj-bet-target {
+          flex: 1 1 0;
+          min-width: 72px;
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 1px;
+          padding: 6px 8px 5px;
+          border-radius: 8px;
+          border: 1px solid rgba(232,223,199,0.28);
+          background: rgba(0,0,0,0.18);
+          color: rgba(232,223,199,0.7);
+          cursor: pointer;
+          font-family: inherit;
+        }
+        .bj-bet-target.is-on {
+          border-color: var(--casino-accent, #C9A227);
+          background: color-mix(in srgb, var(--casino-accent, #C9A227) 18%, rgba(0,0,0,0.2));
+          color: #F0E6D2;
+        }
+        .bj-bet-target-label {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 13px;
+          letter-spacing: 0.12em;
+        }
+        .bj-bet-target-amt {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 16px;
+          letter-spacing: 0.04em;
+          color: var(--casino-accent, #C9A227);
+        }
+        .bj-side-stack {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 2px;
+        }
+        .bj-side-tag {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 10px;
+          letter-spacing: 0.08em;
+          color: rgba(232,223,199,0.75);
+          background: rgba(0,0,0,0.35);
+          border: 1px solid rgba(201,162,39,0.45);
+          border-radius: 4px;
+          padding: 0 4px;
+          line-height: 1.4;
         }
         .bj-auto-toggle.is-on {
           color: #1A1205;
@@ -4049,22 +4524,25 @@ export default function BlackjackGame() {
         }
         .bj-table {
           width: 100%;
-          height: min(560px, 62dvh);
-          min-height: min(560px, 62dvh);
-          max-height: min(560px, 62dvh);
+          flex: 1 1 auto;
+          height: auto;
+          min-height: 0;
+          max-height: none;
           background: transparent;
-          border-radius: 32px 32px 140px 140px / 28px 28px 90px 90px;
-          border: 12px solid #4A2F1A;
-          box-shadow: 0 18px 40px rgba(0,0,0,0.5);
-          padding: clamp(14px, 2.5vw, 24px) clamp(12px, 4vw, 36px) clamp(28px, 5vw, 44px);
+          border-radius: 28px 28px 120px 120px / 24px 24px 78px 78px;
+          border: 14px solid #4A2F1A;
+          box-shadow:
+            0 22px 48px rgba(0,0,0,0.55),
+            0 0 0 1px rgba(232,223,199,0.08),
+            inset 0 0 0 1px rgba(0,0,0,0.35);
+          padding: clamp(12px, 2vw, 22px) clamp(10px, 3.5vw, 34px) clamp(28px, 4.5vw, 48px);
           position: relative;
           display: grid;
-          grid-template-rows: minmax(120px, 0.9fr) auto minmax(180px, 1.2fr);
+          grid-template-rows: minmax(120px, 0.9fr) auto minmax(200px, 1.35fr);
           align-items: center;
           justify-items: center;
-          gap: 8px;
+          gap: 16px;
           overflow: visible;
-          flex-shrink: 0;
           box-sizing: border-box;
         }
         .bj-table-felt {
@@ -4093,33 +4571,6 @@ export default function BlackjackGame() {
         .bj-banner {
           display: none;
         }
-        .bj-table-mark {
-          position: absolute;
-          inset: 22% 10% 28%;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          pointer-events: none;
-          z-index: 0;
-          font-family: cursive;
-          font-size: clamp(40px, 9vw, 88px);
-          line-height: 0.95;
-          letter-spacing: 0.02em;
-          text-align: center;
-          color: color-mix(in srgb, var(--casino-accent) 18%, rgba(232,223,199,0.06));
-          text-shadow:
-            0 1px 0 rgba(255,255,255,0.05),
-            0 3px 10px rgba(0,0,0,0.2);
-          user-select: none;
-          overflow: hidden;
-          opacity: 0.9;
-          transition: color 0.45s ease, transform 0.45s ease;
-        }
-        .bj-table-mark span {
-          max-width: 100%;
-          display: block;
-          word-break: break-word;
-        }
         .bj-player-zone {
           width: 100%;
           height: 100%;
@@ -4141,6 +4592,10 @@ export default function BlackjackGame() {
           padding: 10px 0 6px;
           display: flex;
           align-items: flex-end;
+          -webkit-overflow-scrolling: touch;
+        }
+        .bj-seats-wrap.is-scroll {
+          overflow-x: auto;
         }
         .bj-seats {
           display: flex;
@@ -4160,12 +4615,13 @@ export default function BlackjackGame() {
           width: 100%;
           display: flex;
           flex-direction: column;
-          gap: 10px;
-          padding: 14px 12px 12px;
+          gap: 8px;
+          padding: 10px 12px 10px;
           border: 1.5px solid rgba(232,223,199,0.35);
           border-radius: 14px;
           background: rgba(5,32,24,0.72);
           overflow: visible;
+          flex-shrink: 0;
         }
         .bj-controls-top {
           overflow: visible;
@@ -4200,18 +4656,20 @@ export default function BlackjackGame() {
             align-items: stretch;
             justify-content: flex-start;
           }
-          .bj-title {
+          .bj-title,
+          .bj-casino-tag {
             display: none;
           }
-          .bj-casino-tag {
-            margin-top: 0;
+          .bj-controls-meta {
             gap: 6px;
-            flex-shrink: 0;
-            padding: 0 2px;
           }
-          .bj-casino-tag-text { font-size: 11px; }
-          .bj-casino-change { width: 24px; height: 24px; font-size: 12px; }
-          .bj-settings-gear { width: 24px; height: 24px; }
+          .bj-casino-pill {
+            max-width: 100%;
+            padding: 2px 2px 2px 8px;
+          }
+          .bj-casino-pill-text { font-size: 11px; }
+          .bj-casino-change,
+          .bj-settings-gear { width: 26px; height: 26px; font-size: 12px; }
           .bj-table {
             flex: 1 1 auto;
             width: 100%;
@@ -4219,12 +4677,15 @@ export default function BlackjackGame() {
             min-height: 0 !important;
             max-height: none !important;
             border-radius: 14px 14px 36px 36px;
-            border-width: 5px;
-            padding: 8px 6px 16px;
-            gap: 2px;
+            border-width: 6px;
+            padding: 8px 6px 18px;
+            gap: 10px;
             overflow: hidden;
-            grid-template-rows: minmax(0, 0.95fr) auto minmax(0, 1.35fr);
+            grid-template-rows: minmax(0, 0.85fr) auto minmax(0, 1.45fr);
             align-self: stretch;
+            box-shadow:
+              0 12px 28px rgba(0,0,0,0.5),
+              0 0 0 1px rgba(232,223,199,0.06);
           }
           .bj-rail {
             border-radius: 10px 10px 28px 28px;
@@ -4245,19 +4706,19 @@ export default function BlackjackGame() {
             right: 2px;
             transform: none;
           }
-          .bj-pays-banner { margin: 0; gap: 1px; min-height: 28px; flex-shrink: 0; }
+          .bj-pays-banner { margin: 6px 0; gap: 3px; min-height: 52px; flex-shrink: 0; padding: 6px 12px; width: 100%; }
+          .bj-table-brand {
+            font-size: clamp(18px, 5vw, 28px);
+            letter-spacing: 0.06em;
+          }
+          .bj-table-brand-rule { width: min(160px, 48vw); margin: 1px 0; }
           .bj-pays-main {
-            font-size: 13px;
-            letter-spacing: 0.08em;
+            font-size: 12px;
+            letter-spacing: 0.1em;
           }
           .bj-pays-rules {
             font-size: 10px;
-            letter-spacing: 0.06em;
-          }
-          .bj-table-mark {
-            font-size: clamp(28px, 10vw, 48px) !important;
-            inset: 18% 10% 38% !important;
-            opacity: 0.4;
+            letter-spacing: 0.08em;
           }
           .bj-player-zone {
             padding: 4px 2px 6px;
@@ -4266,6 +4727,10 @@ export default function BlackjackGame() {
           .bj-seats-wrap {
             padding: 4px 0 2px;
             min-height: 0;
+            overflow: visible;
+          }
+          .bj-seats-wrap.is-scroll {
+            overflow-x: auto;
           }
           .bj-seats { gap: 6px; min-height: 0; }
           .bj-hand {
@@ -4295,7 +4760,7 @@ export default function BlackjackGame() {
           .bj-chip-spot-ph {
             width: 72px !important;
             min-width: 72px !important;
-            min-height: 84px !important;
+            min-height: 96px !important;
           }
           .bj-controls {
             flex-shrink: 0;
@@ -4374,8 +4839,9 @@ export default function BlackjackGame() {
         }
         @media (max-width: 640px) and (max-height: 700px) {
           .bj-pays-rules { display: none; }
-          .bj-pays-banner { min-height: 22px; }
-          .bj-pays-main { font-size: 12px; }
+          .bj-pays-banner { min-height: 48px; }
+          .bj-table-brand { font-size: clamp(20px, 6.5vw, 28px); }
+          .bj-pays-main { font-size: 11px; }
           .bj-card { width: 68px !important; height: 96px !important; }
           .bj-card.is-compact { width: 56px !important; height: 80px !important; }
           .bj-card-rank { font-size: 18px !important; }
@@ -4412,51 +4878,9 @@ export default function BlackjackGame() {
       `}</style>
 
       <div className="bj-shell">
-        <div className="bj-title">BLACKJACK</div>
-        <div className="bj-casino-tag">
-          <div className="bj-casino-tag-text">
-            <span className="bj-casino-tag-name">{casino.name}</span>
-            {" · "}
-            {casino.city}, {casino.abbr}
-          </div>
-          <button
-            type="button"
-            className="bj-casino-change"
-            disabled={phase !== "betting" || shuffling || shuffleStage !== "idle"}
-            onClick={openCasinoPicker}
-            aria-label="Switch casino"
-            title="Switch casino"
-          >
-            ⇄
-          </button>
-          <button
-            type="button"
-            className="bj-settings-gear"
-            disabled={shuffleStage !== "idle"}
-            onClick={() => setSettingsOpen(true)}
-            aria-label="Table settings"
-            title="Table settings"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden fill="currentColor">
-              <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.6.24-1.14.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.83 14.52a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.43.34.68.22l2.39-.96c.49.39 1.03.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.8c.24 0 .44-.18.49-.42l.36-2.54c.6-.24 1.14-.55 1.63-.94l2.39.96c.25.12.54.02.68-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" />
-            </svg>
-          </button>
-        </div>
-
         <div className="bj-table">
           <div className="bj-table-felt" aria-hidden />
           <div className="bj-rail" aria-hidden />
-          <div
-            className="bj-table-mark"
-            aria-hidden
-            style={{
-              fontFamily: script.family,
-              letterSpacing: script.tracking,
-              transform: `rotate(${script.rotate}deg) scale(${script.scale})`,
-            }}
-          >
-            <span>{casino.name}</span>
-          </div>
 
           <div className="bj-dealer-row">
             <div className="bj-dealer-hand">
@@ -4478,6 +4902,8 @@ export default function BlackjackGame() {
           </div>
 
           <div className="bj-pays-banner" aria-hidden>
+            <div className="bj-table-brand">{casino.name}</div>
+            <div className="bj-table-brand-rule" />
             <div className="bj-pays-main">
               BLACKJACK PAYS {bjPayout === "6:5" ? "6 TO 5" : "3 TO 2"}
             </div>
@@ -4485,16 +4911,18 @@ export default function BlackjackGame() {
               {hitSoft17
                 ? "DEALER HITS SOFT 17"
                 : "DEALER MUST STAND ON ALL 17s"}
+              {sideBetsEnabled ? " · PAIRS · 21+3" : ""}
             </div>
           </div>
 
           <div className="bj-player-zone">
-            <div className="bj-seats-wrap">
+            <div className={`bj-seats-wrap${manySeats ? " is-scroll" : ""}`}>
               <div
                 className="bj-seats"
+                data-count={seatCount}
                 style={{
-                  width: seatCount > 4 ? "max-content" : "100%",
-                  margin: seatCount > 4 ? "0 auto" : undefined,
+                  width: manySeats ? "max-content" : "100%",
+                  margin: manySeats ? "0 auto" : undefined,
                 }}
               >
                 {showTable
@@ -4516,6 +4944,9 @@ export default function BlackjackGame() {
                           cards={h.cards}
                           totalLabel={h.cards.length ? String(ev.total) : "—"}
                           bet={h.bet}
+                          sideBets={h.sideBets}
+                          sideResults={h.sideResults}
+                          sideChipFly={sideChipFly}
                           active={isActiveHand}
                           waiting={isWaitingHand}
                           status={h.status}
@@ -4538,6 +4969,14 @@ export default function BlackjackGame() {
                         cards={[]}
                         totalLabel="—"
                         bet={betAmount}
+                        sideBets={
+                          sideBetsEnabled
+                            ? {
+                                pairs: sideBetPairs,
+                                twentyOnePlus3: sideBet213,
+                              }
+                            : null
+                        }
                         active={false}
                         status="active"
                         compact={handCount >= 3}
@@ -4551,6 +4990,37 @@ export default function BlackjackGame() {
         </div>
 
         <div className="bj-controls">
+          <div className="bj-controls-meta">
+            <div className="bj-casino-pill">
+              <div className="bj-casino-pill-text" title={`${casino.name} · ${casino.city}, ${casino.abbr}`}>
+                <span className="bj-casino-pill-name">{casino.name}</span>
+                {" · "}
+                {casino.city}, {casino.abbr}
+              </div>
+              <button
+                type="button"
+                className="bj-casino-change"
+                disabled={phase !== "betting" || shuffling || shuffleStage !== "idle"}
+                onClick={openCasinoPicker}
+                aria-label="Switch casino"
+                title="Switch casino"
+              >
+                ⇄
+              </button>
+              <button
+                type="button"
+                className="bj-settings-gear"
+                disabled={shuffleStage !== "idle"}
+                onClick={() => setSettingsOpen(true)}
+                aria-label="Table settings"
+                title="Table settings"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden fill="currentColor">
+                  <path d="M19.14 12.94c.04-.31.06-.63.06-.94s-.02-.63-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.1 7.1 0 0 0-1.63-.94l-.36-2.54A.5.5 0 0 0 13.9 2h-3.8a.5.5 0 0 0-.49.42l-.36 2.54c-.6.24-1.14.55-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.48a.5.5 0 0 0 .12.64l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94L2.83 14.52a.5.5 0 0 0-.12.64l1.92 3.32c.14.24.43.34.68.22l2.39-.96c.49.39 1.03.7 1.63.94l.36 2.54c.05.24.25.42.49.42h3.8c.24 0 .44-.18.49-.42l.36-2.54c.6-.24 1.14-.55 1.63-.94l2.39.96c.25.12.54.02.68-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7z" />
+                </svg>
+              </button>
+            </div>
+          </div>
           <div
             className="bj-controls-top"
             style={{
@@ -4574,7 +5044,7 @@ export default function BlackjackGame() {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 10,
+                  gap: 8,
                   flexWrap: "wrap",
                 }}
               >
@@ -4594,7 +5064,7 @@ export default function BlackjackGame() {
                   <button
                     type="button"
                     onClick={clearBet}
-                    disabled={betAmount === 0}
+                    disabled={activeSideAmount === 0}
                     style={{
                       fontFamily: "'Bebas Neue', sans-serif",
                       fontSize: 12,
@@ -4604,8 +5074,8 @@ export default function BlackjackGame() {
                       border: `1px solid ${FELT.markDim}`,
                       background: "transparent",
                       color: FELT.mark,
-                      cursor: betAmount === 0 ? "default" : "pointer",
-                      opacity: betAmount === 0 ? 0.35 : 0.85,
+                      cursor: activeSideAmount === 0 ? "default" : "pointer",
+                      opacity: activeSideAmount === 0 ? 0.35 : 0.85,
                     }}
                   >
                     CLEAR
@@ -4620,9 +5090,36 @@ export default function BlackjackGame() {
                     marginLeft: "auto",
                   }}
                 >
-                  BET ${betAmount.toLocaleString()}
+                  TOTAL ${totalStake.toLocaleString()}
                 </span>
               </div>
+              {phase === "betting" && sideBetsEnabled && (
+                <div className="bj-bet-targets" role="tablist" aria-label="Bet target">
+                  {SIDE_BET_TARGETS.map((t) => {
+                    const amount =
+                      t.id === "main"
+                        ? betAmount
+                        : t.id === "pairs"
+                          ? sideBetPairs
+                          : sideBet213;
+                    const on = betTarget === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={on}
+                        className={`bj-bet-target${on ? " is-on" : ""}`}
+                        onClick={() => setBetTarget(t.id)}
+                        title={t.hint}
+                      >
+                        <span className="bj-bet-target-label">{t.label}</span>
+                        <span className="bj-bet-target-amt">${amount}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
               <div
                 className="bj-chip-tray"
                 style={{
@@ -4635,9 +5132,24 @@ export default function BlackjackGame() {
                 }}
               >
                 {tableChips.map((c) => {
-                  const next = betAmount + c.value;
-                  const wouldExceedMax = next > casino.maxBet;
-                  const wouldExceedBank = next * handCount > bank;
+                  const target = sideBetsEnabled ? betTarget : "main";
+                  const nextMain =
+                    target === "main" ? betAmount + c.value : betAmount;
+                  const nextPairs =
+                    target === "pairs" ? sideBetPairs + c.value : sideBetPairs;
+                  const nextPlus3 =
+                    target === "twentyOnePlus3"
+                      ? sideBet213 + c.value
+                      : sideBet213;
+                  const nextTargetAmt =
+                    target === "pairs"
+                      ? nextPairs
+                      : target === "twentyOnePlus3"
+                        ? nextPlus3
+                        : nextMain;
+                  const nextPerHand = nextMain + nextPairs + nextPlus3;
+                  const wouldExceedMax = nextTargetAmt > casino.maxBet;
+                  const wouldExceedBank = nextPerHand * handCount > bank;
                   const chipDisabled =
                     phase !== "betting" || wouldExceedMax || wouldExceedBank;
                   return (
@@ -4646,7 +5158,7 @@ export default function BlackjackGame() {
                       {...c}
                       size={64}
                       casinoName={casino.name}
-                      selected={lastChip === c.value && betAmount > 0}
+                      selected={lastChip === c.value && activeSideAmount > 0}
                       disabled={chipDisabled}
                       onClick={() => addChipToBet(c.value)}
                     />
@@ -4773,7 +5285,10 @@ export default function BlackjackGame() {
                   fontVariantNumeric: "tabular-nums",
                 }}
               >
-                Total bet ${totalStake}
+                Total ${totalStake}
+                {sideBetsEnabled && (sideBetPairs || sideBet213)
+                  ? ` · main $${betAmount}${sideBetPairs ? ` · pairs $${sideBetPairs}` : ""}${sideBet213 ? ` · 21+3 $${sideBet213}` : ""}`
+                  : ""}
                 {shoeRemaining <= reshuffleAtRef.current + 20 ? " · shoe low" : ""}
               </div>
             </div>
@@ -4929,6 +5444,8 @@ export default function BlackjackGame() {
         onPlayerCut={setPlayerCut}
         autoDeal={autoDeal}
         onAutoDeal={setAutoDeal}
+        sideBetsEnabled={sideBetsEnabled}
+        onSideBetsEnabled={setSideBetsOn}
         canEdit={canEditSettings}
         onRestart={handleRestartGame}
         onEndSession={() => endSession("manual")}
