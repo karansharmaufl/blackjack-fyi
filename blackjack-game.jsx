@@ -95,7 +95,7 @@ const CHIP_DENOMS = [
   },
 ];
 
-const DEFAULT_DECKS = 4;
+const DEFAULT_DECKS = 2;
 const STARTING_BANK = 1000;
 const DEAL_STEP_MS = 380;
 const DEAL_FLIGHT_MS = 360;
@@ -104,11 +104,79 @@ const CHIP_FLY_MS = 700;
 const SHUFFLE_MS = 2000;
 const SHUFFLE_DECK_MS = 850;
 const SHUFFLE_STACK_MS = 700;
+const AUTO_DEAL_PAUSE_MS = 650;
 const CHIP_ORDER = [500, 100, 25, 10, 5, 1];
+/** Short shoes (1–2) finish faster for auto-deal analytics; multi-deck still available. */
 const DECK_OPTIONS = [1, 2, 4, 6, 8];
 
 /** Survives React Strict Mode remount so boot shuffle isn't cancelled mid-flight. */
 let shoeSessionBootstrapped = false;
+
+function createSessionStats(bank = STARTING_BANK) {
+  return {
+    rounds: 0,
+    hands: 0,
+    wins: 0,
+    losses: 0,
+    pushes: 0,
+    blackjacks: 0,
+    busts: 0,
+    totalWagered: 0,
+    netProfit: 0,
+    peakBank: bank,
+    lowBank: bank,
+    startBank: bank,
+    endBank: bank,
+    startedAt: Date.now(),
+    endedAt: null,
+    endReason: null,
+  };
+}
+
+function applyRoundToStats(stats, settledHands, bankAfter) {
+  const next = { ...stats };
+  next.rounds += 1;
+  for (const h of settledHands) {
+    next.hands += 1;
+    next.totalWagered += h.bet || 0;
+    next.netProfit += h.profit || 0;
+    if (h.outcome === "blackjack" || h.status === "blackjack") {
+      next.blackjacks += 1;
+      next.wins += 1;
+    } else if (h.outcome === "win" || h.status === "won") {
+      next.wins += 1;
+    } else if (h.outcome === "push" || h.status === "push") {
+      next.pushes += 1;
+    } else {
+      next.losses += 1;
+      if (h.status === "bust" || h.outcome === "loss") {
+        /* bust counted below */
+      }
+    }
+    if (h.status === "bust") next.busts += 1;
+  }
+  next.endBank = bankAfter;
+  next.peakBank = Math.max(next.peakBank, bankAfter);
+  next.lowBank = Math.min(next.lowBank, bankAfter);
+  // Prefer bank delta for net so doubles/splits stay consistent
+  next.netProfit = bankAfter - next.startBank;
+  return next;
+}
+
+function formatDuration(ms) {
+  const sec = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m <= 0) return `${s}s`;
+  return `${m}m ${s.toString().padStart(2, "0")}s`;
+}
+
+function endReasonLabel(reason) {
+  if (reason === "shoe") return "Cut card — shoe complete";
+  if (reason === "bank") return "Bankroll exhausted";
+  if (reason === "manual") return "Session ended";
+  return "Session complete";
+}
 
 function chipStyle(value) {
   return CHIP_DENOMS.find((c) => c.value === value) || CHIP_DENOMS[0];
@@ -885,6 +953,7 @@ function FeltHand({
   totalLabel,
   bet = 0,
   active = false,
+  waiting = false,
   status = "active",
   outcome = null,
   payoutAmount = 0,
@@ -923,6 +992,7 @@ function FeltHand({
     >
       <span className="bj-hand-label">{label}</span>
       <span className="bj-hand-score">{totalLabel}</span>
+      {active ? <span className="bj-hand-turn">TURN</span> : null}
     </div>
   );
 
@@ -1047,8 +1117,18 @@ function FeltHand({
 
   return (
     <div
-      className={`bj-hand bj-hand-${role}${active ? " is-active" : ""}${ghost ? " is-ghost" : ""}`}
+      className={[
+        "bj-hand",
+        `bj-hand-${role}`,
+        active ? "is-active" : "",
+        waiting ? "is-waiting" : "",
+        ghost ? "is-ghost" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      aria-current={active ? "true" : undefined}
     >
+      {active ? <div className="bj-hand-active-glow" aria-hidden /> : null}
       {isDealer ? (
         <>
           {total}
@@ -1435,8 +1515,12 @@ function SettingsPanel({
   onDeckCount,
   playerCut,
   onPlayerCut,
+  autoDeal,
+  onAutoDeal,
   canEdit,
   onRestart,
+  onEndSession,
+  canEndSession,
 }) {
   if (!open) return null;
   return (
@@ -1508,6 +1592,10 @@ function SettingsPanel({
               </button>
             ))}
           </div>
+          <div className="bj-settings-hint">
+            Prefer 1–2 decks for short auto-deal sessions — the cut card ends the
+            shoe and opens analytics.
+          </div>
         </div>
 
         <div className={`bj-settings-section${canEdit ? "" : " is-locked"}`}>
@@ -1536,6 +1624,42 @@ function SettingsPanel({
           </div>
         </div>
 
+        <div className="bj-settings-section">
+          <div className="bj-settings-label">Auto-deal</div>
+          <div className="bj-settings-seg">
+            <button
+              type="button"
+              className={`bj-settings-seg-btn${!autoDeal ? " is-on" : ""}`}
+              onClick={() => onAutoDeal(false)}
+            >
+              OFF
+            </button>
+            <button
+              type="button"
+              className={`bj-settings-seg-btn${autoDeal ? " is-on" : ""}`}
+              onClick={() => onAutoDeal(true)}
+            >
+              ON
+            </button>
+          </div>
+          <div className="bj-settings-hint">
+            After each settle, deals the next round with your current bet. You
+            still play the hand. Session ends at the cut card or when the bank
+            can’t cover the bet — then analytics open.
+          </div>
+        </div>
+
+        {canEndSession ? (
+          <button
+            type="button"
+            className="bj-settings-restart"
+            style={{ borderColor: "rgba(232,223,199,0.45)", background: "transparent", color: "#F0E6D2" }}
+            onClick={onEndSession}
+          >
+            END SESSION · VIEW ANALYTICS
+          </button>
+        ) : null}
+
         <button
           type="button"
           className="bj-settings-restart"
@@ -1548,6 +1672,109 @@ function SettingsPanel({
           Resets the bank, reshuffles every deck half-and-half, loads the shoe,
           then asks you to cut when Player cut is on.
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsOverlay({
+  open,
+  stats,
+  meta,
+  onClose,
+  onNewSession,
+}) {
+  if (!open || !stats) return null;
+  const decided = Math.max(1, stats.wins + stats.losses);
+  const winRate = Math.round((stats.wins / decided) * 100);
+  const duration = formatDuration(
+    (stats.endedAt || Date.now()) - (stats.startedAt || Date.now())
+  );
+  const net = stats.netProfit;
+  const netColor = net > 0 ? "#7ED4A0" : net < 0 ? "#E39AA1" : "#E8DFC7";
+  const rows = [
+    { label: "Rounds", value: String(stats.rounds) },
+    { label: "Hands", value: String(stats.hands) },
+    { label: "Wins", value: String(stats.wins) },
+    { label: "Losses", value: String(stats.losses) },
+    { label: "Pushes", value: String(stats.pushes) },
+    { label: "Blackjacks", value: String(stats.blackjacks) },
+    { label: "Busts", value: String(stats.busts) },
+    { label: "Win rate", value: `${winRate}%` },
+    {
+      label: "Wagered",
+      value: `$${Math.round(stats.totalWagered).toLocaleString()}`,
+    },
+    {
+      label: "Peak bank",
+      value: `$${Math.round(stats.peakBank).toLocaleString()}`,
+    },
+    {
+      label: "Low bank",
+      value: `$${Math.round(stats.lowBank).toLocaleString()}`,
+    },
+    { label: "Duration", value: duration },
+  ];
+
+  return (
+    <div className="bj-settings-overlay" role="dialog" aria-modal="true" aria-label="Session analytics">
+      <div className="bj-settings-panel bj-analytics-panel">
+        <div className="bj-settings-head">
+          <div>
+            <div className="bj-settings-title">SESSION ANALYTICS</div>
+            <div className="bj-settings-sub">{endReasonLabel(stats.endReason)}</div>
+          </div>
+          <button type="button" className="bj-settings-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+
+        {meta ? (
+          <div className="bj-analytics-meta">
+            {meta.casino}
+            {" · "}
+            {meta.decks}-deck · BJ {meta.bjPayout} · {meta.hitSoft17 ? "H17" : "S17"}
+          </div>
+        ) : null}
+
+        <div className="bj-analytics-hero">
+          <div className="bj-analytics-hero-label">NET RESULT</div>
+          <div className="bj-analytics-hero-value" style={{ color: netColor }}>
+            {net > 0 ? "+" : net < 0 ? "−" : ""}
+            ${Math.abs(Math.round(net)).toLocaleString()}
+          </div>
+          <div className="bj-analytics-hero-bank">
+            ${Math.round(stats.startBank).toLocaleString()}
+            {" → "}
+            ${Math.round(stats.endBank).toLocaleString()}
+          </div>
+        </div>
+
+        <div className="bj-analytics-grid">
+          {rows.map((r) => (
+            <div key={r.label} className="bj-analytics-cell">
+              <div className="bj-analytics-cell-label">{r.label}</div>
+              <div className="bj-analytics-cell-value">{r.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <button type="button" className="bj-settings-restart" onClick={onNewSession}>
+          NEW SHOE · PLAY AGAIN
+        </button>
+        <button
+          type="button"
+          className="bj-settings-restart"
+          style={{
+            borderColor: "rgba(232,223,199,0.35)",
+            background: "transparent",
+            color: "#F0E6D2",
+            marginTop: -4,
+          }}
+          onClick={onClose}
+        >
+          CLOSE
+        </button>
       </div>
     </div>
   );
@@ -1705,12 +1932,17 @@ export default function BlackjackGame() {
   const [hitSoft17, setHitSoft17] = useState(false);
   const [deckCount, setDeckCount] = useState(DEFAULT_DECKS);
   const [playerCut, setPlayerCut] = useState(true);
+  const [autoDeal, setAutoDeal] = useState(false);
   const [isNarrow, setIsNarrow] = useState(false);
   const [phase, setPhase] = useState("betting");
   const [betAmount, setBetAmount] = useState(() => getDefaultCasino().minBet);
   const [lastChip, setLastChip] = useState(() => getDefaultCasino().minBet);
   const [handCount, setHandCount] = useState(1);
   const [bank, setBank] = useState(STARTING_BANK);
+  const [sessionStats, setSessionStats] = useState(() =>
+    createSessionStats(STARTING_BANK)
+  );
+  const [analytics, setAnalytics] = useState(null);
   const [dealerCards, setDealerCards] = useState([]);
   const [hands, setHands] = useState([]);
   const [activeHandIndex, setActiveHandIndex] = useState(0);
@@ -1738,6 +1970,10 @@ export default function BlackjackGame() {
   const activeIndexRef = useRef(0);
   const pendingShoeRef = useRef(null);
   const shuffleLockRef = useRef(false);
+  const autoDealRef = useRef(false);
+  const sessionStatsRef = useRef(sessionStats);
+  const analyticsOpenRef = useRef(false);
+  const endSessionRef = useRef(() => {});
 
   const clearTimers = () => {
     timersRef.current.forEach((id) => window.clearTimeout(id));
@@ -1780,6 +2016,51 @@ export default function BlackjackGame() {
   useEffect(() => {
     activeIndexRef.current = activeHandIndex;
   }, [activeHandIndex]);
+
+  useEffect(() => {
+    autoDealRef.current = autoDeal;
+  }, [autoDeal]);
+
+  useEffect(() => {
+    sessionStatsRef.current = sessionStats;
+  }, [sessionStats]);
+
+  useEffect(() => {
+    analyticsOpenRef.current = !!analytics;
+  }, [analytics]);
+
+  const resetSessionStats = useCallback((nextBank = STARTING_BANK) => {
+    const fresh = createSessionStats(nextBank);
+    sessionStatsRef.current = fresh;
+    setSessionStats(fresh);
+  }, []);
+
+  const endSession = useCallback((reason = "manual") => {
+    if (analyticsOpenRef.current) return;
+    const snapshot = {
+      ...sessionStatsRef.current,
+      endBank: bankRef.current,
+      netProfit: bankRef.current - sessionStatsRef.current.startBank,
+      endedAt: Date.now(),
+      endReason: reason,
+    };
+    sessionStatsRef.current = snapshot;
+    setSessionStats(snapshot);
+    setAnalytics(snapshot);
+    setAutoDeal(false);
+    autoDealRef.current = false;
+    setChipFlyPhase("idle");
+    setHands([]);
+    handsRef.current = [];
+    setDealerCards([]);
+    dealerRef.current = [];
+    setPhase("betting");
+    setSettingsOpen(false);
+  }, []);
+
+  useEffect(() => {
+    endSessionRef.current = endSession;
+  }, [endSession]);
 
   const tableChips = useMemo(
     () => chipsForTable(casino.minBet, casino.maxBet),
@@ -1871,6 +2152,10 @@ export default function BlackjackGame() {
       if (resetBank) {
         setBank(STARTING_BANK);
         bankRef.current = STARTING_BANK;
+        const fresh = createSessionStats(STARTING_BANK);
+        sessionStatsRef.current = fresh;
+        setSessionStats(fresh);
+        setAnalytics(null);
       }
 
       const decks = rulesRef.current.deckCount;
@@ -1995,7 +2280,14 @@ export default function BlackjackGame() {
 
         const finishId = window.setTimeout(() => {
           let nextBank = bankRef.current + creditTotal;
-          if (nextBank <= 0) nextBank = STARTING_BANK;
+          if (nextBank < 0) nextBank = 0;
+          const nextStats = applyRoundToStats(
+            sessionStatsRef.current,
+            settled,
+            nextBank
+          );
+          sessionStatsRef.current = nextStats;
+          setSessionStats(nextStats);
           setBank(nextBank);
           bankRef.current = nextBank;
           setChipFlyPhase("done");
@@ -2190,10 +2482,16 @@ export default function BlackjackGame() {
 
   const handleDeal = () => {
     if (!canAffordDeal || phase !== "betting" || shuffling) return;
+    if (analyticsOpenRef.current) return;
     clearTimers();
 
     const needsShuffle = shoeRef.current.length <= reshuffleAtRef.current;
     if (needsShuffle) {
+      // Auto-deal sessions end at the cut card instead of reshuffling mid-run.
+      if (autoDealRef.current && sessionStatsRef.current.rounds > 0) {
+        endSessionRef.current("shoe");
+        return;
+      }
       runShuffleCeremony({ dealAfter: true });
       return;
     }
@@ -2203,7 +2501,29 @@ export default function BlackjackGame() {
 
   const handleRestartGame = () => {
     if (!canEditSettings) return;
+    setAnalytics(null);
+    setAutoDeal(false);
+    autoDealRef.current = false;
+    resetSessionStats(STARTING_BANK);
     runShuffleCeremony({ dealAfter: false, resetBank: true });
+  };
+
+  const handleNewSessionFromAnalytics = () => {
+    setAnalytics(null);
+    clearTimers();
+    setBank(STARTING_BANK);
+    bankRef.current = STARTING_BANK;
+    resetSessionStats(STARTING_BANK);
+    setBetAmount(casino.minBet);
+    setHandCount(1);
+    setHands([]);
+    handsRef.current = [];
+    setDealerCards([]);
+    dealerRef.current = [];
+    setChipFlyPhase("idle");
+    setPhase("betting");
+    setSettingsOpen(false);
+    runShuffleCeremony({ dealAfter: false, resetBank: false });
   };
 
   const handleDeckCountChange = (n) => {
@@ -2417,9 +2737,14 @@ export default function BlackjackGame() {
     clearTimers();
     let nextBank = bankRef.current;
     if (nextBank <= 0) {
+      if (sessionStatsRef.current.rounds > 0) {
+        endSessionRef.current("bank");
+        return;
+      }
       nextBank = STARTING_BANK;
       setBank(nextBank);
       bankRef.current = nextBank;
+      resetSessionStats(nextBank);
     }
     const nextBet =
       betAmount >= casino.minBet && betAmount <= casino.maxBet
@@ -2436,6 +2761,61 @@ export default function BlackjackGame() {
     setChipFlyPhase("idle");
     setPhase("betting");
   };
+
+  // Auto-deal: after settle chips finish, continue or end the session.
+  useEffect(() => {
+    if (!autoDeal) return;
+    if (analytics) return;
+    if (phase !== "settle") return;
+    if (chipFlyPhase !== "done") return;
+    if (shuffling || shuffleStage !== "idle") return;
+
+    const stake = Math.max(casino.minBet, betAmount) * Math.max(1, handCount);
+    const bankNow = bankRef.current;
+    const shoeLow = shoeRef.current.length <= reshuffleAtRef.current;
+
+    if (bankNow <= 0 || bankNow < stake) {
+      endSession("bank");
+      return undefined;
+    }
+    if (shoeLow) {
+      endSession("shoe");
+      return undefined;
+    }
+
+    const t = window.setTimeout(() => {
+      if (!autoDealRef.current || analyticsOpenRef.current) return;
+      handleNewRound();
+      const dealT = window.setTimeout(() => {
+        if (!autoDealRef.current || analyticsOpenRef.current) return;
+        if (bankRef.current < betAmount * handCount) {
+          endSessionRef.current("bank");
+          return;
+        }
+        if (shoeRef.current.length <= reshuffleAtRef.current) {
+          endSessionRef.current("shoe");
+          return;
+        }
+        runDeal();
+      }, 220);
+      timersRef.current.push(dealT);
+    }, AUTO_DEAL_PAUSE_MS);
+
+    timersRef.current.push(t);
+    return () => window.clearTimeout(t);
+    // handleNewRound/runDeal/endSession are stable enough via refs for this loop
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    autoDeal,
+    analytics,
+    phase,
+    chipFlyPhase,
+    shuffling,
+    shuffleStage,
+    betAmount,
+    handCount,
+    casino.minBet,
+  ]);
 
   const flyForHand = (status) => {
     if (chipFlyPhase === "pay") {
@@ -3263,6 +3643,84 @@ export default function BlackjackGame() {
           box-shadow: none;
           transform: translateY(4px);
         }
+        .bj-auto-toggle {
+          flex: 0 0 auto;
+          min-width: 72px;
+          padding: 12px 14px;
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 16px;
+          letter-spacing: 2px;
+          color: rgba(232,223,199,0.75);
+          background: transparent;
+          border: 1.5px solid rgba(232,223,199,0.35);
+          border-radius: 10px;
+          cursor: pointer;
+        }
+        .bj-auto-toggle.is-on {
+          color: #1A1205;
+          background: linear-gradient(180deg, #C9A227 0%, #A8861A 100%);
+          border-color: #C9A227;
+        }
+        .bj-analytics-panel {
+          width: min(460px, 100%);
+          max-height: min(92dvh, 720px);
+          overflow: auto;
+        }
+        .bj-analytics-meta {
+          font-size: 12px;
+          color: rgba(232,223,199,0.55);
+          letter-spacing: 0.02em;
+        }
+        .bj-analytics-hero {
+          text-align: center;
+          padding: 10px 8px 14px;
+          border-radius: 12px;
+          border: 1px solid rgba(232,223,199,0.18);
+          background: rgba(0,0,0,0.18);
+        }
+        .bj-analytics-hero-label {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 13px;
+          letter-spacing: 0.18em;
+          color: rgba(232,223,199,0.55);
+        }
+        .bj-analytics-hero-value {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 42px;
+          letter-spacing: 0.04em;
+          line-height: 1.05;
+          margin-top: 4px;
+        }
+        .bj-analytics-hero-bank {
+          margin-top: 4px;
+          font-size: 13px;
+          color: rgba(232,223,199,0.6);
+          font-variant-numeric: tabular-nums;
+        }
+        .bj-analytics-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 8px;
+        }
+        .bj-analytics-cell {
+          padding: 10px 10px 8px;
+          border-radius: 10px;
+          border: 1px solid rgba(232,223,199,0.14);
+          background: rgba(0,0,0,0.14);
+        }
+        .bj-analytics-cell-label {
+          font-size: 11px;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          color: rgba(232,223,199,0.5);
+        }
+        .bj-analytics-cell-value {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 22px;
+          letter-spacing: 0.04em;
+          color: #F0E6D2;
+          margin-top: 2px;
+        }
         .bj-shuffle-overlay,
         .bj-cut-overlay {
           position: fixed;
@@ -3754,6 +4212,11 @@ export default function BlackjackGame() {
             font-size: 14px !important;
             letter-spacing: 1px !important;
           }
+          .bj-action-row > .bj-auto-toggle {
+            flex: 0 0 auto;
+            min-width: 64px;
+            padding: 10px 12px !important;
+          }
           .bj-footer-note { display: none; }
         }
         @media (max-width: 640px) and (max-height: 780px) {
@@ -3868,6 +4331,12 @@ export default function BlackjackGame() {
                       const ev = evaluateHand(h.cards);
                       const displayLabel =
                         hands.length === 1 ? "YOU" : `H${i + 1}`;
+                      const isActiveHand =
+                        phase === "player" && i === activeHandIndex;
+                      const isWaitingHand =
+                        phase === "player" &&
+                        hands.length > 1 &&
+                        i !== activeHandIndex;
                       return (
                         <FeltHand
                           key={h.id}
@@ -3876,7 +4345,8 @@ export default function BlackjackGame() {
                           cards={h.cards}
                           totalLabel={h.cards.length ? String(ev.total) : "—"}
                           bet={h.bet}
-                          active={phase === "player" && i === activeHandIndex}
+                          active={isActiveHand}
+                          waiting={isWaitingHand}
                           status={h.status}
                           outcome={phase === "settle" ? h.outcome : null}
                           flash={h.flash || null}
@@ -4138,13 +4608,23 @@ export default function BlackjackGame() {
 
         <div className="bj-actions">
           {phase === "betting" && (
-            <ActionButton
-              label={shuffling ? "SHUFFLING…" : "DEAL"}
-              primary
-              wide
-              disabled={!canAffordDeal}
-              onClick={handleDeal}
-            />
+            <div className="bj-action-row" style={{ width: "100%", gap: 8 }}>
+              <ActionButton
+                label={shuffling ? "SHUFFLING…" : "DEAL"}
+                primary
+                disabled={!canAffordDeal}
+                onClick={handleDeal}
+              />
+              <button
+                type="button"
+                className={`bj-auto-toggle${autoDeal ? " is-on" : ""}`}
+                onClick={() => setAutoDeal((v) => !v)}
+                aria-pressed={autoDeal}
+                title="Auto-deal next rounds after settle"
+              >
+                AUTO
+              </button>
+            </div>
           )}
 
           {phase === "dealing" && (
@@ -4193,12 +4673,36 @@ export default function BlackjackGame() {
           )}
 
           {phase === "settle" && (
-            <ActionButton
-              label="NEW ROUND"
-              primary
-              wide
-              onClick={handleNewRound}
-            />
+            autoDeal ? (
+              <div className="bj-action-row" style={{ width: "100%", gap: 8 }}>
+                <ActionButton
+                  label="AUTO-DEAL…"
+                  primary
+                  wide
+                  disabled
+                  onClick={() => {}}
+                />
+                <ActionButton
+                  label="STOP"
+                  onClick={() => setAutoDeal(false)}
+                />
+              </div>
+            ) : (
+              <div className="bj-action-row" style={{ width: "100%", gap: 8 }}>
+                <ActionButton
+                  label="NEW ROUND"
+                  primary
+                  wide
+                  onClick={handleNewRound}
+                />
+                {sessionStats.rounds > 0 ? (
+                  <ActionButton
+                    label="STATS"
+                    onClick={() => endSession("manual")}
+                  />
+                ) : null}
+              </div>
+            )
           )}
         </div>
         </div>
@@ -4216,7 +4720,11 @@ export default function BlackjackGame() {
             {deckCount}-deck shoe · BJ {bjPayout} ·{" "}
             {hitSoft17 ? "H17" : "S17"}
             {playerCut ? " · player cut" : ""}
+            {autoDeal ? " · auto-deal" : ""}
             {" · hands limited by bank"}
+            {sessionStats.rounds > 0
+              ? ` · ${sessionStats.rounds} round${sessionStats.rounds === 1 ? "" : "s"}`
+              : ""}
           </div>
         )}
       </div>
@@ -4246,8 +4754,25 @@ export default function BlackjackGame() {
         onDeckCount={handleDeckCountChange}
         playerCut={playerCut}
         onPlayerCut={setPlayerCut}
+        autoDeal={autoDeal}
+        onAutoDeal={setAutoDeal}
         canEdit={canEditSettings}
         onRestart={handleRestartGame}
+        onEndSession={() => endSession("manual")}
+        canEndSession={sessionStats.rounds > 0 && phase === "betting"}
+      />
+
+      <AnalyticsOverlay
+        open={!!analytics}
+        stats={analytics}
+        meta={{
+          casino: casino.name,
+          decks: deckCount,
+          bjPayout,
+          hitSoft17,
+        }}
+        onClose={() => setAnalytics(null)}
+        onNewSession={handleNewSessionFromAnalytics}
       />
 
       {(shuffleStage === "riffling" || shuffleStage === "stacking") && (
