@@ -323,103 +323,21 @@ function Card({ rank, suit, faceDown = false, dealKey, flipping = false, compact
   const h = compact ? 78 : 100;
 
   const face = faceDown ? (
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        borderRadius: 8,
-        background:
-          "linear-gradient(145deg, #0E5A3F 0%, #09402C 55%, #073024 100%)",
-        border: `2px solid ${FELT.gold}`,
-        boxShadow: "0 6px 14px rgba(0,0,0,0.4)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <div
-        style={{
-          width: compact ? 28 : 36,
-          height: compact ? 40 : 52,
-          border: `1.5px solid ${FELT.gold}`,
-          borderRadius: 4,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "rgba(0,0,0,0.2)",
-        }}
-      >
-        <div
-          style={{
-            width: 12,
-            height: 12,
-            transform: "rotate(45deg)",
-            background: FELT.gold,
-            opacity: 0.85,
-          }}
-        />
+    <div className="bj-card-face bj-card-back">
+      <div className="bj-card-back-inner">
+        <div className="bj-card-back-motif" />
       </div>
     </div>
   ) : (
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        borderRadius: 8,
-        background: "#F7F2E4",
-        border: "1.5px solid #D4C9A8",
-        boxShadow: "0 6px 14px rgba(0,0,0,0.4)",
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "space-between",
-        padding: compact ? "4px 5px" : "6px 8px",
-        color: suitMeta.color,
-        boxSizing: "border-box",
-      }}
-    >
-      <div style={{ lineHeight: 1 }}>
-        <div
-          style={{
-            fontFamily: "'Bebas Neue', sans-serif",
-            fontSize: compact ? 16 : 22,
-            letterSpacing: 0.5,
-          }}
-        >
-          {rank}
-        </div>
-        <div style={{ fontSize: compact ? 11 : 14, marginTop: -2 }}>
-          {suitMeta.symbol}
-        </div>
+    <div className="bj-card-face bj-card-front" style={{ color: suitMeta.color }}>
+      <div className="bj-card-corner bj-card-corner-tl">
+        <div className="bj-card-rank">{rank}</div>
+        <div className="bj-card-suit">{suitMeta.symbol}</div>
       </div>
-      <div
-        style={{
-          alignSelf: "center",
-          fontSize: compact ? 20 : 28,
-          lineHeight: 1,
-          opacity: 0.95,
-        }}
-      >
-        {suitMeta.symbol}
-      </div>
-      <div
-        style={{
-          alignSelf: "flex-end",
-          transform: "rotate(180deg)",
-          lineHeight: 1,
-        }}
-      >
-        <div
-          style={{
-            fontFamily: "'Bebas Neue', sans-serif",
-            fontSize: compact ? 16 : 22,
-            letterSpacing: 0.5,
-          }}
-        >
-          {rank}
-        </div>
-        <div style={{ fontSize: compact ? 11 : 14, marginTop: -2 }}>
-          {suitMeta.symbol}
-        </div>
+      <div className="bj-card-center">{suitMeta.symbol}</div>
+      <div className="bj-card-corner bj-card-corner-br">
+        <div className="bj-card-rank">{rank}</div>
+        <div className="bj-card-suit">{suitMeta.symbol}</div>
       </div>
     </div>
   );
@@ -427,7 +345,7 @@ function Card({ rank, suit, faceDown = false, dealKey, flipping = false, compact
   return (
     <div
       key={dealKey}
-      className="bj-card"
+      className={`bj-card${compact ? " is-compact" : ""}`}
       aria-label={faceDown ? "Face-down card" : `${rank} of ${suitMeta.symbol}`}
       style={{
         width: w,
@@ -788,12 +706,12 @@ function FeltHand({
   );
 }
 
-function Chip({ value, face, rim, ink, edge, spot, selected, onClick, disabled }) {
+function Chip({ value, face, rim, ink, edge, spot, selected, onClick, disabled, size = 56 }) {
   const spots = [0, 45, 90, 135, 180, 225, 270, 315];
-  const size = 56;
   return (
     <button
       type="button"
+      className="bj-select-chip"
       onClick={onClick}
       disabled={disabled}
       aria-label={`$${value} chip`}
@@ -819,6 +737,7 @@ function Chip({ value, face, rim, ink, edge, spot, selected, onClick, disabled }
         transition: "box-shadow 0.15s, transform 0.15s",
         opacity: disabled ? 0.4 : 1,
         overflow: "hidden",
+        flexShrink: 0,
       }}
     >
       {spots.map((deg) => (
@@ -829,13 +748,13 @@ function Chip({ value, face, rim, ink, edge, spot, selected, onClick, disabled }
             position: "absolute",
             top: "50%",
             left: "50%",
-            width: 9,
-            height: 12,
-            marginLeft: -4.5,
-            marginTop: -6,
+            width: size * 0.16,
+            height: size * 0.22,
+            marginLeft: -(size * 0.08),
+            marginTop: -(size * 0.11),
             borderRadius: 2,
             background: spot || rim,
-            transform: `rotate(${deg}deg) translateY(-21px)`,
+            transform: `rotate(${deg}deg) translateY(-${size * 0.38}px)`,
             pointerEvents: "none",
           }}
         />
@@ -853,7 +772,7 @@ function Chip({ value, face, rim, ink, edge, spot, selected, onClick, disabled }
           alignItems: "center",
           justifyContent: "center",
           fontFamily: "'Bebas Neue', sans-serif",
-          fontSize: 15,
+          fontSize: size >= 48 ? 15 : 12,
           letterSpacing: 0.5,
           background: face,
         }}
@@ -1151,6 +1070,7 @@ export default function BlackjackGame() {
   const [draftCasino, setDraftCasino] = useState(getDefaultCasino);
   const [casinoQuery, setCasinoQuery] = useState("");
   const [pickingCasino, setPickingCasino] = useState(false);
+  const [isNarrow, setIsNarrow] = useState(false);
   const [phase, setPhase] = useState("betting");
   const [selectedChip, setSelectedChip] = useState(25);
   const [handCount, setHandCount] = useState(1);
@@ -1180,6 +1100,19 @@ export default function BlackjackGame() {
   useEffect(() => () => clearTimers(), []);
 
   useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return undefined;
+    const mq = window.matchMedia("(max-width: 640px)");
+    const apply = () => setIsNarrow(!!mq.matches);
+    apply();
+    mq.addEventListener?.("change", apply);
+    mq.addListener?.(apply);
+    return () => {
+      mq.removeEventListener?.("change", apply);
+      mq.removeListener?.(apply);
+    };
+  }, []);
+
+  useEffect(() => {
     handsRef.current = hands;
   }, [hands]);
 
@@ -1205,7 +1138,7 @@ export default function BlackjackGame() {
 
   const revealHole = phase === "dealer" || phase === "settle";
   const seatCount = phase === "betting" ? handCount : Math.max(hands.length, 1);
-  const compact = seatCount >= 3;
+  const compact = seatCount >= 3 || isNarrow;
 
   const dealerTotal = useMemo(() => {
     if (dealerCards.length === 0) return "—";
@@ -1956,6 +1889,82 @@ export default function BlackjackGame() {
           0%, 100% { transform: translateX(0) rotate(-2deg); }
           50% { transform: translateX(6px) rotate(3deg); }
         }
+        .bj-card {
+          overflow: hidden;
+          border-radius: 8px;
+        }
+        .bj-card-face {
+          width: 100%;
+          height: 100%;
+          border-radius: 8px;
+          box-sizing: border-box;
+          overflow: hidden;
+        }
+        .bj-card-back {
+          background: linear-gradient(145deg, #0E5A3F 0%, #09402C 55%, #073024 100%);
+          border: 2px solid ${FELT.gold};
+          box-shadow: 0 6px 14px rgba(0,0,0,0.4);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .bj-card-back-inner {
+          width: 50%;
+          height: 58%;
+          border: 1.5px solid ${FELT.gold};
+          border-radius: 4;
+          border-radius: 4px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: rgba(0,0,0,0.2);
+        }
+        .bj-card-back-motif {
+          width: 12px;
+          height: 12px;
+          transform: rotate(45deg);
+          background: ${FELT.gold};
+          opacity: 0.85;
+        }
+        .bj-card-front {
+          background: #F7F2E4;
+          border: 1.5px solid #D4C9A8;
+          box-shadow: 0 6px 14px rgba(0,0,0,0.4);
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          padding: 6px 8px;
+        }
+        .bj-card.is-compact .bj-card-front {
+          padding: 4px 5px;
+        }
+        .bj-card-corner {
+          line-height: 1;
+        }
+        .bj-card-corner-br {
+          align-self: flex-end;
+          transform: rotate(180deg);
+        }
+        .bj-card-rank {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 22px;
+          letter-spacing: 0.5px;
+          line-height: 1;
+        }
+        .bj-card.is-compact .bj-card-rank { font-size: 16px; }
+        .bj-card-suit {
+          font-size: 14px;
+          margin-top: -2px;
+          line-height: 1;
+        }
+        .bj-card.is-compact .bj-card-suit { font-size: 11px; }
+        .bj-card-center {
+          align-self: center;
+          font-size: 28px;
+          line-height: 1;
+          opacity: 0.95;
+        }
+        .bj-card.is-compact .bj-card-center { font-size: 20px; }
         .bj-chip-spot {
           /* theme animations defined above */
         }
@@ -2199,8 +2208,15 @@ export default function BlackjackGame() {
           background: transparent;
           border: none;
           position: relative;
+          z-index: 2;
+          isolation: isolate;
         }
-        .bj-hand.is-ghost { opacity: 0.6; }
+        .bj-hand-player .bj-cards {
+          margin-bottom: 2px;
+        }
+        .bj-hand-player .bj-hand-total {
+          margin-top: 2px;
+        }
         .bj-hand.is-active .bj-hand-label {
           color: var(--casino-accent, #C9A227);
         }
@@ -2208,6 +2224,12 @@ export default function BlackjackGame() {
           display: flex;
           align-items: baseline;
           gap: 6px;
+          position: relative;
+          z-index: 3;
+          padding: 2px 8px;
+          border-radius: 8px;
+          background: rgba(5, 24, 18, 0.55);
+          backdrop-filter: blur(2px);
         }
         .bj-hand-label {
           font-family: 'Bebas Neue', sans-serif;
@@ -2223,6 +2245,7 @@ export default function BlackjackGame() {
           min-width: 20px;
           text-align: center;
           text-shadow: 0 1px 2px rgba(0,0,0,0.4);
+          font-variant-numeric: tabular-nums;
         }
         .bj-bet-amount {
           font-family: 'Bebas Neue', sans-serif;
@@ -2413,37 +2436,129 @@ export default function BlackjackGame() {
           flex-wrap: wrap;
         }
         @media (max-width: 640px) {
-          .bj-page { padding: 8px !important; align-items: stretch !important; }
+          .bj-page {
+            padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px)) !important;
+            align-items: stretch !important;
+          }
+          .bj-shell { gap: 6px; }
+          .bj-title {
+            font-size: clamp(22px, 7vw, 30px);
+            letter-spacing: 0.14em;
+            line-height: 1;
+          }
+          .bj-casino-tag { margin-top: 0; gap: 6px; }
+          .bj-casino-tag-text { font-size: 11px; }
+          .bj-casino-change { width: 24px; height: 24px; font-size: 12px; }
           .bj-table {
-            border-radius: 20px 20px 48px 48px;
-            border-width: 8px;
-            min-height: auto;
-            padding: 14px 10px 22px;
-            gap: 10px;
+            border-radius: 16px 16px 40px 40px;
+            border-width: 6px;
+            min-height: 0;
+            padding: 10px 8px 14px;
+            gap: 6px;
+            overflow: hidden;
           }
           .bj-rail {
-            border-radius: 14px 14px 40px 40px;
-            inset: 6px;
-          }
-          .bj-seats { gap: 12px; }
-          .bj-hand {
-            min-width: 78px !important;
-            max-width: 150px !important;
-            flex: 1 1 78px !important;
+            border-radius: 12px 12px 32px 32px;
+            inset: 4px;
           }
           .bj-dealer-row {
-            grid-template-columns: 28px 1fr 72px;
+            grid-template-columns: 8px 1fr 56px;
+            min-height: 0;
           }
-          .bj-pays-main { letter-spacing: 0.1em; }
-          .bj-pays-rules { letter-spacing: 0.08em; }
-          .bj-controls { padding: 10px; border-radius: 12px; }
-          .bj-action-row > button { flex: 1 1 calc(50% - 8px); min-width: 0; }
-          .bj-card { width: 50px !important; height: 70px !important; }
-          .bj-cards { min-height: 70px !important; }
-          .bj-shoe { width: 74px; height: 98px; }
-          .bj-shoe-shell { width: 68px; height: 90px; }
-          .bj-shoe-next { height: 34px; }
-          .bj-table-mark { font-size: clamp(32px, 12vw, 56px); inset: 18% 6% 30%; }
+          .bj-dealer-row .bj-shoe {
+            margin-top: 0;
+            transform: scale(0.82);
+            transform-origin: top right;
+          }
+          .bj-pays-banner { margin: 0; gap: 1px; }
+          .bj-pays-main {
+            font-size: 14px;
+            letter-spacing: 0.08em;
+          }
+          .bj-pays-rules {
+            font-size: 10px;
+            letter-spacing: 0.06em;
+          }
+          .bj-table-mark {
+            font-size: clamp(26px, 9vw, 42px) !important;
+            inset: 20% 12% 42% !important;
+            opacity: 0.45;
+          }
+          .bj-seats { gap: 8px; }
+          .bj-hand {
+            min-width: 0 !important;
+            max-width: 160px !important;
+            flex: 1 1 auto !important;
+            gap: 4px;
+            padding: 2px;
+          }
+          .bj-hand-total {
+            padding: 1px 6px;
+            gap: 4px;
+          }
+          .bj-hand-label { font-size: 11px; letter-spacing: 0.1em; }
+          .bj-hand-score { font-size: 18px; }
+          .bj-chip-spot {
+            min-width: 56px !important;
+            min-height: 56px !important;
+            padding: 6px 8px 4px !important;
+            transform: scale(0.9);
+          }
+          .bj-bet-amount { font-size: 12px; }
+          .bj-card { width: 44px !important; height: 62px !important; }
+          .bj-card-front { padding: 3px 4px !important; }
+          .bj-card-rank { font-size: 13px !important; }
+          .bj-card-suit { font-size: 9px !important; }
+          .bj-card-center { font-size: 16px !important; }
+          .bj-card-back-inner { width: 46%; height: 54%; }
+          .bj-card-back-motif { width: 8px; height: 8px; }
+          .bj-cards {
+            min-height: 62px !important;
+            padding-left: 10px !important;
+          }
+          .bj-shoe { width: 58px; height: 78px; }
+          .bj-shoe-shell { width: 54px; height: 72px; }
+          .bj-shoe-next { height: 28px; }
+          .bj-controls {
+            padding: 8px;
+            border-radius: 12px;
+            gap: 6px;
+          }
+          .bj-controls-top {
+            gap: 8px !important;
+          }
+          .bj-select-chip {
+            width: 42px !important;
+            height: 42px !important;
+          }
+          .bj-bank-label { font-size: 10px !important; margin-bottom: 0 !important; }
+          .bj-bank-value { font-size: 20px !important; }
+          .bj-hands-row { gap: 6px !important; }
+          .bj-hands-label { font-size: 12px !important; }
+          .bj-hands-btn {
+            width: 30px !important;
+            height: 30px !important;
+            font-size: 18px !important;
+          }
+          .bj-hands-count { font-size: 22px !important; min-width: 28px !important; }
+          .bj-action-row { gap: 6px; }
+          .bj-action-row > button {
+            flex: 1 1 calc(25% - 6px);
+            min-width: 0;
+            padding: 10px 0 !important;
+            font-size: 14px !important;
+            letter-spacing: 1px !important;
+          }
+          .bj-footer-note { display: none; }
+        }
+        @media (max-width: 640px) and (max-height: 780px) {
+          .bj-title { display: none; }
+          .bj-pays-rules { display: none; }
+          .bj-table { padding: 8px 6px 10px; gap: 4px; }
+          .bj-card { width: 40px !important; height: 56px !important; }
+          .bj-card-rank { font-size: 12px !important; }
+          .bj-card-center { font-size: 14px !important; }
+          .bj-cards { min-height: 56px !important; }
         }
       `}</style>
 
@@ -2561,6 +2676,7 @@ export default function BlackjackGame() {
 
         <div className="bj-controls">
           <div
+            className="bj-controls-top"
             style={{
               display: "flex",
               alignItems: "center",
@@ -2574,6 +2690,7 @@ export default function BlackjackGame() {
                 <Chip
                   key={c.value}
                   {...c}
+                  size={48}
                   selected={selectedChip === c.value}
                   disabled={phase !== "betting"}
                   onClick={() => {
@@ -2590,6 +2707,7 @@ export default function BlackjackGame() {
             </div>
             <div style={{ textAlign: "right", flexShrink: 0 }}>
               <div
+                className="bj-bank-label"
                 style={{
                   fontSize: 11,
                   color: "rgba(232,223,199,0.5)",
@@ -2600,6 +2718,7 @@ export default function BlackjackGame() {
                 BANK
               </div>
               <div
+                className="bj-bank-value"
                 style={{
                   fontFamily: "'Bebas Neue', sans-serif",
                   fontSize: 26,
@@ -2612,110 +2731,104 @@ export default function BlackjackGame() {
             </div>
           </div>
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 10,
-              flexWrap: "wrap",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span
-                style={{
-                  fontFamily: "'Bebas Neue', sans-serif",
-                  fontSize: 14,
-                  letterSpacing: 2,
-                  color: "rgba(232,223,199,0.55)",
-                }}
-              >
-                HANDS
-              </span>
-              <button
-                type="button"
-                disabled={phase !== "betting" || handCount <= 1}
-                onClick={() => {
-                  if (phase === "betting" && handCount > 1) {
-                    setHandCount((n) => n - 1);
-                  }
-                }}
-                aria-label="Fewer hands"
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 8,
-                  border: `1.5px solid ${FELT.markDim}`,
-                  background: "transparent",
-                  color: FELT.mark,
-                  fontFamily: "'Bebas Neue', sans-serif",
-                  fontSize: 22,
-                  cursor:
-                    phase !== "betting" || handCount <= 1
-                      ? "default"
-                      : "pointer",
-                  opacity: phase !== "betting" || handCount <= 1 ? 0.35 : 1,
-                }}
-              >
-                −
-              </button>
-              <span
-                style={{
-                  fontFamily: "'Bebas Neue', sans-serif",
-                  fontSize: 28,
-                  color: FELT.gold,
-                  minWidth: 36,
-                  textAlign: "center",
-                  letterSpacing: 1,
-                }}
-              >
-                {handCount}
-              </span>
-              <button
-                type="button"
-                disabled={
-                  phase !== "betting" || handCount >= maxAffordableHands
-                }
-                onClick={() => {
-                  if (phase === "betting" && handCount < maxAffordableHands) {
-                    setHandCount((n) => n + 1);
-                  }
-                }}
-                aria-label="More hands"
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 8,
-                  border: `1.5px solid ${FELT.markDim}`,
-                  background: "transparent",
-                  color: FELT.mark,
-                  fontFamily: "'Bebas Neue', sans-serif",
-                  fontSize: 22,
-                  cursor:
-                    phase !== "betting" || handCount >= maxAffordableHands
-                      ? "default"
-                      : "pointer",
-                  opacity:
-                    phase !== "betting" || handCount >= maxAffordableHands
-                      ? 0.35
-                      : 1,
-                }}
-              >
-                +
-              </button>
-            </div>
+          {phase === "betting" ? (
             <div
+              className="bj-hands-row"
               style={{
-                fontSize: 12,
-                color: "rgba(232,223,199,0.55)",
-                fontVariantNumeric: "tabular-nums",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                flexWrap: "wrap",
               }}
             >
-              Total bet ${totalStake}
-              {shoeRemaining <= RESHUFFLE_AT + 20 ? " · shoe low" : ""}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span
+                  className="bj-hands-label"
+                  style={{
+                    fontFamily: "'Bebas Neue', sans-serif",
+                    fontSize: 14,
+                    letterSpacing: 2,
+                    color: "rgba(232,223,199,0.55)",
+                  }}
+                >
+                  HANDS
+                </span>
+                <button
+                  type="button"
+                  className="bj-hands-btn"
+                  disabled={handCount <= 1}
+                  onClick={() => {
+                    if (handCount > 1) setHandCount((n) => n - 1);
+                  }}
+                  aria-label="Fewer hands"
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    border: `1.5px solid ${FELT.markDim}`,
+                    background: "transparent",
+                    color: FELT.mark,
+                    fontFamily: "'Bebas Neue', sans-serif",
+                    fontSize: 22,
+                    cursor: handCount <= 1 ? "default" : "pointer",
+                    opacity: handCount <= 1 ? 0.35 : 1,
+                  }}
+                >
+                  −
+                </button>
+                <span
+                  className="bj-hands-count"
+                  style={{
+                    fontFamily: "'Bebas Neue', sans-serif",
+                    fontSize: 28,
+                    color: FELT.gold,
+                    minWidth: 36,
+                    textAlign: "center",
+                    letterSpacing: 1,
+                  }}
+                >
+                  {handCount}
+                </span>
+                <button
+                  type="button"
+                  className="bj-hands-btn"
+                  disabled={handCount >= maxAffordableHands}
+                  onClick={() => {
+                    if (handCount < maxAffordableHands) {
+                      setHandCount((n) => n + 1);
+                    }
+                  }}
+                  aria-label="More hands"
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    border: `1.5px solid ${FELT.markDim}`,
+                    background: "transparent",
+                    color: FELT.mark,
+                    fontFamily: "'Bebas Neue', sans-serif",
+                    fontSize: 22,
+                    cursor:
+                      handCount >= maxAffordableHands ? "default" : "pointer",
+                    opacity: handCount >= maxAffordableHands ? 0.35 : 1,
+                  }}
+                >
+                  +
+                </button>
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "rgba(232,223,199,0.55)",
+                  fontVariantNumeric: "tabular-nums",
+                }}
+              >
+                Total bet ${totalStake}
+                {shoeRemaining <= RESHUFFLE_AT + 20 ? " · shoe low" : ""}
+              </div>
             </div>
-          </div>
-        </div>
+          ) : null}
 
         <div className="bj-actions">
           {phase === "betting" && (
@@ -2782,9 +2895,11 @@ export default function BlackjackGame() {
             />
           )}
         </div>
+        </div>
 
         {phase === "betting" && (
           <div
+            className="bj-footer-note"
             style={{
               textAlign: "center",
               fontSize: 11,
