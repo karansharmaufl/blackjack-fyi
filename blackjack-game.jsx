@@ -529,12 +529,14 @@ function Card({ rank, suit, faceDown = false, dealKey, flipping = false, compact
 
   const face = faceDown ? (
     <div className="bj-card-face bj-card-back">
+      <div className="bj-card-back-pattern" aria-hidden />
       <div className="bj-card-back-inner">
         <div className="bj-card-back-motif" />
       </div>
     </div>
   ) : (
     <div className="bj-card-face bj-card-front" style={{ color: suitMeta.color }}>
+      <div className="bj-card-front-sheen" aria-hidden />
       <div className="bj-card-corner bj-card-corner-tl">
         <div className="bj-card-rank">{rank}</div>
         <div className="bj-card-suit">{suitMeta.symbol}</div>
@@ -3048,6 +3050,7 @@ export default function BlackjackGame() {
         .bj-card {
           overflow: hidden;
           border-radius: 8px;
+          background: #F8F4EA;
         }
         .bj-card-face {
           width: 100%;
@@ -3055,47 +3058,90 @@ export default function BlackjackGame() {
           border-radius: 8px;
           box-sizing: border-box;
           overflow: hidden;
+          position: relative;
         }
         .bj-card-back {
-          background: linear-gradient(145deg, #0E5A3F 0%, #09402C 55%, #073024 100%);
+          background:
+            radial-gradient(ellipse at 30% 20%, rgba(255,255,255,0.1) 0%, transparent 45%),
+            linear-gradient(145deg, #146B4A 0%, #0B4530 48%, #06281C 100%);
           border: 2px solid ${FELT.gold};
-          box-shadow: 0 6px 14px rgba(0,0,0,0.4);
+          box-shadow:
+            0 6px 14px rgba(0,0,0,0.45),
+            inset 0 0 0 1px rgba(255,255,255,0.08);
           display: flex;
           align-items: center;
           justify-content: center;
         }
+        .bj-card-back-pattern {
+          position: absolute;
+          inset: 5px;
+          border-radius: 4px;
+          background:
+            repeating-linear-gradient(
+              45deg,
+              rgba(201, 162, 39, 0.22) 0 1px,
+              transparent 1px 7px
+            ),
+            repeating-linear-gradient(
+              -45deg,
+              rgba(201, 162, 39, 0.18) 0 1px,
+              transparent 1px 7px
+            ),
+            linear-gradient(180deg, rgba(0,0,0,0.12), rgba(0,0,0,0.28));
+          border: 1px solid rgba(201, 162, 39, 0.35);
+          pointer-events: none;
+        }
         .bj-card-back-inner {
-          width: 50%;
-          height: 58%;
+          width: 46%;
+          height: 54%;
           border: 1.5px solid ${FELT.gold};
-          border-radius: 4;
           border-radius: 4px;
           display: flex;
           align-items: center;
           justify-content: center;
-          background: rgba(0,0,0,0.2);
+          background:
+            radial-gradient(circle at 50% 45%, rgba(201,162,39,0.28) 0%, transparent 65%),
+            rgba(4, 22, 16, 0.55);
+          box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25);
+          position: relative;
+          z-index: 1;
         }
         .bj-card-back-motif {
           width: 12px;
           height: 12px;
           transform: rotate(45deg);
           background: ${FELT.gold};
-          opacity: 0.85;
+          box-shadow: 0 0 0 2px rgba(4, 22, 16, 0.45);
+          opacity: 0.95;
         }
         .bj-card-front {
-          background: #F7F2E4;
-          border: 1.5px solid #D4C9A8;
-          box-shadow: 0 6px 14px rgba(0,0,0,0.4);
+          background:
+            radial-gradient(ellipse at 20% 15%, #FFFEF8 0%, transparent 40%),
+            linear-gradient(165deg, #FFFEF9 0%, #F4EEDC 55%, #EBE3CF 100%);
+          border: 1.5px solid #C9B98A;
+          box-shadow:
+            0 6px 14px rgba(0,0,0,0.42),
+            inset 0 0 0 1px rgba(255,255,255,0.65);
           display: flex;
           flex-direction: column;
           justify-content: space-between;
           padding: 6px 8px;
+        }
+        .bj-card-front-sheen {
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          background:
+            linear-gradient(125deg, rgba(255,255,255,0.35) 0%, transparent 38%, transparent 100%);
+          pointer-events: none;
         }
         .bj-card.is-compact .bj-card-front {
           padding: 4px 5px;
         }
         .bj-card-corner {
           line-height: 1;
+          position: relative;
+          z-index: 1;
         }
         .bj-card-corner-br {
           align-self: flex-end;
@@ -3119,31 +3165,33 @@ export default function BlackjackGame() {
           font-size: 28px;
           line-height: 1;
           opacity: 0.95;
+          position: relative;
+          z-index: 1;
         }
         .bj-card.is-compact .bj-card-center { font-size: 20px; }
         .bj-shoe {
           flex-shrink: 0;
-          width: 92px;
-          height: 118px;
+          width: 118px;
+          height: 150px;
           display: flex;
           align-items: flex-end;
           justify-content: flex-end;
           z-index: 2;
-          filter: drop-shadow(0 10px 16px rgba(0,0,0,0.45));
+          filter: drop-shadow(0 12px 18px rgba(0,0,0,0.5));
         }
         .bj-shoe-shell {
           position: relative;
-          width: 84px;
-          height: 108px;
-          border-radius: 10px 18px 12px 8px / 12px 22px 10px 8px;
+          width: 108px;
+          height: 138px;
+          border-radius: 12px 22px 14px 10px / 14px 26px 12px 10px;
           background:
             linear-gradient(155deg,
-              rgba(210, 225, 230, 0.22) 0%,
-              rgba(120, 145, 155, 0.28) 42%,
-              rgba(40, 55, 65, 0.45) 100%);
-          border: 1.5px solid rgba(230, 240, 245, 0.45);
+              rgba(220, 232, 236, 0.28) 0%,
+              rgba(130, 155, 165, 0.32) 42%,
+              rgba(40, 55, 65, 0.5) 100%);
+          border: 1.5px solid rgba(230, 240, 245, 0.5);
           box-shadow:
-            inset 0 1px 0 rgba(255,255,255,0.35),
+            inset 0 1px 0 rgba(255,255,255,0.4),
             inset -6px 0 14px rgba(0,0,0,0.28),
             inset 0 -8px 16px rgba(0,0,0,0.22),
             0 2px 0 rgba(255,255,255,0.08);
@@ -3207,6 +3255,16 @@ export default function BlackjackGame() {
           height: 100%;
           border-radius: 3px;
           background:
+            repeating-linear-gradient(
+              45deg,
+              rgba(201, 162, 39, 0.2) 0 1px,
+              transparent 1px 6px
+            ),
+            repeating-linear-gradient(
+              -45deg,
+              rgba(201, 162, 39, 0.16) 0 1px,
+              transparent 1px 6px
+            ),
             linear-gradient(145deg, #127A52 0%, #0B4530 48%, #073024 100%);
           border: 1.5px solid ${FELT.gold};
           box-shadow:
@@ -3326,7 +3384,7 @@ export default function BlackjackGame() {
           height: 100%;
           min-height: 0;
           /* Keep cards clear of the shoe without shifting their center */
-          padding: 0 72px;
+          padding: 0 96px;
           box-sizing: border-box;
         }
         .bj-pays-banner {
@@ -4114,49 +4172,70 @@ export default function BlackjackGame() {
         }
         @media (max-width: 640px) {
           .bj-page {
-            padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 0px)) !important;
+            height: 100dvh !important;
+            min-height: 100dvh !important;
+            max-height: 100dvh !important;
+            padding: 4px 4px calc(4px + env(safe-area-inset-bottom, 0px)) !important;
             align-items: stretch !important;
+            overflow: hidden !important;
           }
-          .bj-shell { gap: 6px; }
+          .bj-shell {
+            width: 100%;
+            height: 100%;
+            min-height: 0;
+            flex: 1 1 auto;
+            gap: 4px;
+            align-items: stretch;
+            justify-content: flex-start;
+          }
           .bj-title {
-            font-size: clamp(22px, 7vw, 30px);
-            letter-spacing: 0.14em;
-            line-height: 1;
+            display: none;
           }
-          .bj-casino-tag { margin-top: 0; gap: 6px; }
+          .bj-casino-tag {
+            margin-top: 0;
+            gap: 6px;
+            flex-shrink: 0;
+            padding: 0 2px;
+          }
           .bj-casino-tag-text { font-size: 11px; }
           .bj-casino-change { width: 24px; height: 24px; font-size: 12px; }
           .bj-settings-gear { width: 24px; height: 24px; }
           .bj-table {
-            border-radius: 16px 16px 40px 40px;
-            border-width: 6px;
-            height: min(480px, 58dvh);
-            min-height: min(480px, 58dvh);
-            max-height: min(480px, 58dvh);
-            padding: 10px 8px 20px;
-            gap: 4px;
-            overflow: visible;
-            grid-template-rows: minmax(120px, 0.9fr) auto minmax(180px, 1.3fr);
+            flex: 1 1 auto;
+            width: 100%;
+            height: auto !important;
+            min-height: 0 !important;
+            max-height: none !important;
+            border-radius: 14px 14px 36px 36px;
+            border-width: 5px;
+            padding: 8px 6px 16px;
+            gap: 2px;
+            overflow: hidden;
+            grid-template-rows: minmax(0, 0.95fr) auto minmax(0, 1.35fr);
+            align-self: stretch;
           }
           .bj-rail {
-            border-radius: 12px 12px 32px 32px;
-            inset: 4px;
+            border-radius: 10px 10px 28px 28px;
+            inset: 3px;
           }
           .bj-dealer-row {
             min-height: 0;
+            height: 100%;
+            width: 100%;
+            align-self: stretch;
           }
           .bj-dealer-hand {
-            padding: 0 52px;
+            padding: 0 64px;
+            height: 100%;
           }
           .bj-dealer-row .bj-shoe {
-            top: 0;
-            right: 0;
-            transform: scale(0.82);
-            transform-origin: top right;
+            top: 2px;
+            right: 2px;
+            transform: none;
           }
-          .bj-pays-banner { margin: 0; gap: 1px; min-height: 32px; }
+          .bj-pays-banner { margin: 0; gap: 1px; min-height: 28px; flex-shrink: 0; }
           .bj-pays-main {
-            font-size: 14px;
+            font-size: 13px;
             letter-spacing: 0.08em;
           }
           .bj-pays-rules {
@@ -4164,22 +4243,30 @@ export default function BlackjackGame() {
             letter-spacing: 0.06em;
           }
           .bj-table-mark {
-            font-size: clamp(26px, 9vw, 42px) !important;
-            inset: 20% 12% 42% !important;
-            opacity: 0.45;
+            font-size: clamp(28px, 10vw, 48px) !important;
+            inset: 18% 10% 38% !important;
+            opacity: 0.4;
           }
-          .bj-seats { gap: 8px; }
+          .bj-player-zone {
+            padding: 4px 2px 6px;
+            min-height: 0;
+          }
+          .bj-seats-wrap {
+            padding: 4px 0 2px;
+            min-height: 0;
+          }
+          .bj-seats { gap: 6px; min-height: 0; }
           .bj-hand {
             min-width: 0 !important;
-            max-width: 160px !important;
+            max-width: none !important;
             flex: 1 1 auto !important;
             gap: 4px;
             padding: 2px;
           }
           .bj-hand-dealer .bj-cards,
           .bj-hand-player .bj-cards {
-            min-height: 96px !important;
-            height: 96px !important;
+            min-height: 108px !important;
+            height: 108px !important;
           }
           .bj-outcome-ph,
           .bj-outcome-banner {
@@ -4194,63 +4281,50 @@ export default function BlackjackGame() {
           .bj-hand-score { font-size: 18px; }
           .bj-chip-spot,
           .bj-chip-spot-ph {
+            width: 72px !important;
             min-width: 72px !important;
             min-height: 84px !important;
-            width: 72px !important;
-            padding: 0 !important;
-            transform: none;
-            overflow: visible !important;
-          }
-          .bj-bet-amount { font-size: 12px; }
-          .bj-select-chip {
-            width: 58px !important;
-            height: 58px !important;
-            overflow: visible !important;
-            margin: 4px 2px !important;
           }
           .bj-controls {
-            padding: 12px 10px 10px !important;
+            flex-shrink: 0;
+            padding: 8px 8px 8px !important;
             overflow: visible !important;
-          }
-          .bj-controls-top {
-            padding: 6px 4px 2px !important;
-            overflow: visible !important;
-          }
-          .bj-card { width: 68px !important; height: 96px !important; }
-          .bj-card.is-compact { width: 56px !important; height: 80px !important; }
-          .bj-card-front { padding: 5px 6px !important; }
-          .bj-card-rank { font-size: 18px !important; }
-          .bj-card.is-compact .bj-card-rank { font-size: 15px !important; }
-          .bj-card-suit { font-size: 12px !important; }
-          .bj-card.is-compact .bj-card-suit { font-size: 10px !important; }
-          .bj-card-center { font-size: 26px !important; }
-          .bj-card.is-compact .bj-card-center { font-size: 20px !important; }
-          .bj-card-back-inner { width: 48%; height: 56%; }
-          .bj-card-back-motif { width: 10px; height: 10px; }
-          .bj-cards {
-            min-height: 96px !important;
-            padding-left: 0 !important;
-          }
-          .bj-cards > div {
-            margin-left: -26px !important;
-          }
-          .bj-cards > div:first-child {
-            margin-left: 0 !important;
-          }
-          .bj-shoe { width: 58px; height: 78px; }
-          .bj-shoe-shell { width: 54px; height: 72px; }
-          .bj-shoe-next { height: 28px; }
-          .bj-controls {
-            padding: 8px;
             border-radius: 12px;
             gap: 6px;
           }
           .bj-controls-top {
-            gap: 8px !important;
+            padding: 2px 2px 0 !important;
+            overflow: visible !important;
+            gap: 6px !important;
           }
+          .bj-card { width: 76px !important; height: 108px !important; }
+          .bj-card.is-compact { width: 62px !important; height: 88px !important; }
+          .bj-card-front { padding: 5px 6px !important; }
+          .bj-card-rank { font-size: 20px !important; }
+          .bj-card.is-compact .bj-card-rank { font-size: 16px !important; }
+          .bj-card-suit { font-size: 13px !important; }
+          .bj-card.is-compact .bj-card-suit { font-size: 11px !important; }
+          .bj-card-center { font-size: 30px !important; }
+          .bj-card.is-compact .bj-card-center { font-size: 22px !important; }
+          .bj-card-back-inner { width: 48%; height: 56%; }
+          .bj-card-back-motif { width: 11px; height: 11px; }
+          .bj-cards {
+            min-height: 108px !important;
+            padding-left: 0 !important;
+          }
+          .bj-cards > div {
+            margin-left: -28px !important;
+          }
+          .bj-cards > div:first-child {
+            margin-left: 0 !important;
+          }
+          .bj-shoe { width: 96px; height: 124px; }
+          .bj-shoe-shell { width: 88px; height: 114px; }
+          .bj-shoe-next { height: 34px; }
+          .bj-shoe-card { height: 38px; }
           .bj-select-chip {
-            width: 58px !important;
-            height: 58px !important;
+            width: 54px !important;
+            height: 54px !important;
           }
           .bj-bank-label { font-size: 10px !important; margin-bottom: 0 !important; }
           .bj-bank-value { font-size: 20px !important; }
@@ -4277,28 +4351,31 @@ export default function BlackjackGame() {
           }
           .bj-footer-note { display: none; }
         }
-        @media (max-width: 640px) and (max-height: 780px) {
-          .bj-title { display: none; }
+        @media (max-width: 640px) and (max-height: 700px) {
           .bj-pays-rules { display: none; }
-          .bj-table {
-            height: min(420px, 54dvh);
-            min-height: min(420px, 54dvh);
-            max-height: min(420px, 54dvh);
-            padding: 8px 6px 12px;
-            gap: 4px;
-            grid-template-rows: minmax(110px, 0.9fr) auto minmax(170px, 1.3fr);
-          }
-          .bj-card { width: 60px !important; height: 86px !important; }
-          .bj-card.is-compact { width: 52px !important; height: 74px !important; }
-          .bj-card-rank { font-size: 16px !important; }
-          .bj-card.is-compact .bj-card-rank { font-size: 14px !important; }
-          .bj-card-center { font-size: 22px !important; }
-          .bj-card.is-compact .bj-card-center { font-size: 18px !important; }
+          .bj-pays-banner { min-height: 22px; }
+          .bj-pays-main { font-size: 12px; }
+          .bj-card { width: 68px !important; height: 96px !important; }
+          .bj-card.is-compact { width: 56px !important; height: 80px !important; }
+          .bj-card-rank { font-size: 18px !important; }
+          .bj-card.is-compact .bj-card-rank { font-size: 15px !important; }
+          .bj-card-center { font-size: 26px !important; }
+          .bj-card.is-compact .bj-card-center { font-size: 20px !important; }
           .bj-hand-dealer .bj-cards,
           .bj-hand-player .bj-cards,
           .bj-cards {
-            min-height: 86px !important;
-            height: 86px !important;
+            min-height: 96px !important;
+            height: 96px !important;
+          }
+          .bj-chip-spot,
+          .bj-chip-spot-ph {
+            width: 64px !important;
+            min-width: 64px !important;
+            min-height: 76px !important;
+          }
+          .bj-select-chip {
+            width: 48px !important;
+            height: 48px !important;
           }
         }
       `}</style>
