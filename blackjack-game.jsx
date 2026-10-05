@@ -576,7 +576,9 @@ function FeltHand({
   );
   const isDealer = role === "dealer";
   const isWin = status === "won" || status === "blackjack";
+  const chipsCleared = chipFly === "done";
   const showPayStack =
+    !chipsCleared &&
     payoutAmount > 0 &&
     isWin &&
     (chipFly === "from-dealer" || chipFly === "to-player");
@@ -588,6 +590,7 @@ function FeltHand({
       : chipFly === "to-player"
         ? "to-player"
         : "idle";
+  const flyingAway = chipFly === "to-dealer" || chipFly === "to-player";
 
   const total = (
     <div
@@ -633,9 +636,9 @@ function FeltHand({
   );
 
   const chipSpot =
-    bet > 0 ? (
+    bet > 0 && !chipsCleared ? (
       <div
-        className={`bj-chip-spot${active ? " is-active" : ""}`}
+        className={`bj-chip-spot${active ? " is-active" : ""}${flyingAway ? " is-clearing" : ""}`}
         style={{
           display: "flex",
           flexDirection: "column",
@@ -648,6 +651,8 @@ function FeltHand({
           borderRadius: "50%",
           boxShadow:
             "inset 0 0 0 2px color-mix(in srgb, var(--casino-accent) 55%, transparent), inset 0 0 0 5px rgba(0,0,0,0.2), 0 4px 12px rgba(0,0,0,0.25)",
+          transition: "opacity 0.35s ease",
+          opacity: flyingAway ? 0.35 : 1,
         }}
       >
         <div
@@ -660,14 +665,14 @@ function FeltHand({
           }}
         >
           <BetChipStack
-            key={`bet-${betFly}`}
+            key={`bet-${betFly}-${chipFly}`}
             amount={bet}
             fly={betFly}
             size={compact ? 40 : 48}
           />
           {showPayStack && (
             <BetChipStack
-              key={`pay-${payFly}`}
+              key={`pay-${payFly}-${chipFly}`}
               amount={payoutAmount}
               fly={payFly}
               size={compact ? 40 : 48}
@@ -675,7 +680,9 @@ function FeltHand({
             />
           )}
         </div>
-        <div className="bj-bet-amount">${formatMoney(bet)}</div>
+        {!flyingAway && (
+          <div className="bj-bet-amount">${formatMoney(bet)}</div>
+        )}
       </div>
     ) : null;
 
@@ -1217,6 +1224,16 @@ export default function BlackjackGame() {
           setBank(nextBank);
           bankRef.current = nextBank;
           setChipFlyPhase("done");
+          // Remove bet stacks from the felt after they finish flying.
+          setHands((prev) => {
+            const cleared = prev.map((h) => ({
+              ...h,
+              bet: 0,
+              payoutAmount: 0,
+            }));
+            handsRef.current = cleared;
+            return cleared;
+          });
         }, collectDelay + CHIP_FLY_MS + 80);
         timersRef.current.push(finishId);
       };
@@ -1717,14 +1734,14 @@ export default function BlackjackGame() {
         }
         @keyframes chipFlyDealer {
           0% { opacity: 1; transform: translate(0, 0) scale(1); }
-          100% { opacity: 0; transform: translate(0, -150px) scale(0.55); }
+          100% { opacity: 0; transform: translate(0, -180px) scale(0.45); }
         }
         @keyframes chipFlyPlayer {
           0% { opacity: 1; transform: translate(0, 0) scale(1); }
-          100% { opacity: 0; transform: translate(0, 90px) scale(0.6); }
+          100% { opacity: 0; transform: translate(0, 120px) scale(0.5); }
         }
         @keyframes chipFlyFromDealer {
-          0% { opacity: 0; transform: translate(0, -130px) scale(0.5); }
+          0% { opacity: 0; transform: translate(0, -150px) scale(0.45); }
           100% { opacity: 1; transform: translate(0, 0) scale(1); }
         }
         @keyframes chipSpotPulse {
