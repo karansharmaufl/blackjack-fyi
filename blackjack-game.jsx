@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback } from "react";
 import { CASINOS, getDefaultCasino, getCasinoTheme, getCasinoScript, SCRIPT_FONTS_QUERY } from "./casinos.js";
 
 const FELT = {
@@ -321,6 +321,19 @@ function Card({ rank, suit, faceDown = false, dealKey, flipping = false, compact
   const suitMeta = SUITS[suit] || SUITS.S;
   const w = compact ? 56 : 72;
   const h = compact ? 78 : 100;
+  // Run entrance/flip once, then clear — re-applying cardDeal (opacity 0) on
+  // later renders was making the dealer's hole card vanish after the flip.
+  const [motion, setMotion] = useState(() => (flipping ? "flip" : "deal"));
+
+  useLayoutEffect(() => {
+    if (flipping) setMotion("flip");
+  }, [flipping, dealKey]);
+
+  useEffect(() => {
+    if (motion === "none") return undefined;
+    const t = window.setTimeout(() => setMotion("none"), DEAL_FLIGHT_MS + 40);
+    return () => window.clearTimeout(t);
+  }, [motion]);
 
   const face = faceDown ? (
     <div className="bj-card-face bj-card-back">
@@ -342,19 +355,23 @@ function Card({ rank, suit, faceDown = false, dealKey, flipping = false, compact
     </div>
   );
 
+  const animation =
+    motion === "flip"
+      ? `cardFlip ${DEAL_FLIGHT_MS}ms ease-out forwards`
+      : motion === "deal"
+        ? `cardDeal ${DEAL_FLIGHT_MS}ms cubic-bezier(0.16, 0.84, 0.28, 1) forwards`
+        : "none";
+
   return (
     <div
-      key={dealKey}
       className={`bj-card${compact ? " is-compact" : ""}`}
       aria-label={faceDown ? "Face-down card" : `${rank} of ${suitMeta.symbol}`}
       style={{
         width: w,
         height: h,
         flexShrink: 0,
-        perspective: 600,
-        animation: flipping
-          ? `cardFlip ${DEAL_FLIGHT_MS}ms ease-out both`
-          : `cardDeal ${DEAL_FLIGHT_MS}ms cubic-bezier(0.16, 0.84, 0.28, 1) both`,
+        transformStyle: "preserve-3d",
+        animation,
       }}
     >
       {face}
@@ -431,27 +448,31 @@ function DealerShoe({ remaining, total = SHOE_SIZE, shuffling = false }) {
   );
 }
 
-function FeltChip({ value, face, rim, ink, edge, spot, size = 52, lift = 0 }) {
-  const spots = [0, 45, 90, 135, 180, 225, 270, 315];
+function FeltChip({ value, face, rim, ink, edge, spot, size = 52, offset = 0 }) {
   return (
     <div
       aria-hidden
       className="bj-felt-chip"
       style={{
-        position: "absolute",
-        left: "50%",
-        bottom: lift,
+        position: "relative",
         width: size,
         height: size,
-        marginLeft: -size / 2,
+        marginTop: offset ? -Math.round(size * 0.78) : 0,
         borderRadius: "50%",
+        flexShrink: 0,
         background: `
           radial-gradient(circle at 32% 28%, rgba(255,255,255,0.35), transparent 42%),
+          repeating-conic-gradient(
+            from 0deg,
+            ${spot || rim} 0deg 18deg,
+            transparent 18deg 45deg
+          ),
           radial-gradient(circle at 50% 55%, ${face} 0%, ${edge || face} 78%)
         `,
+        backgroundBlendMode: "normal, soft-light, normal",
         color: ink,
         boxShadow: `
-          0 ${4 + lift * 0.15}px ${10 + lift * 0.1}px rgba(0,0,0,0.55),
+          0 4px 10px rgba(0,0,0,0.45),
           0 1px 0 rgba(255,255,255,0.2) inset,
           0 -2px 4px rgba(0,0,0,0.35) inset
         `,
@@ -459,28 +480,9 @@ function FeltChip({ value, face, rim, ink, edge, spot, size = 52, lift = 0 }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        zIndex: Math.floor(lift) + 1,
+        zIndex: offset + 1,
       }}
     >
-      {/* Edge spots — classic casino chip look */}
-      {spots.map((deg) => (
-        <span
-          key={deg}
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            width: size * 0.16,
-            height: size * 0.22,
-            marginLeft: -(size * 0.08),
-            marginTop: -(size * 0.11),
-            borderRadius: 3,
-            background: spot || rim,
-            transform: `rotate(${deg}deg) translateY(-${size * 0.38}px)`,
-            boxShadow: "0 0 0 1px rgba(0,0,0,0.15)",
-          }}
-        />
-      ))}
       <span
         style={{
           position: "relative",
@@ -509,8 +511,6 @@ function FeltChip({ value, face, rim, ink, edge, spot, size = 52, lift = 0 }) {
 function BetChipStack({ amount, fly = "idle", size = 52, delay = 0 }) {
   const chips = chipsForAmount(amount, 5);
   if (!chips.length) return null;
-  const step = Math.round(size * 0.12);
-  const height = size + Math.max(0, chips.length - 1) * step;
   const anim =
     fly === "to-dealer"
       ? "chipFlyDealer"
@@ -525,12 +525,12 @@ function BetChipStack({ amount, fly = "idle", size = 52, delay = 0 }) {
       className={`bj-bet-stack${fly === "idle" ? " is-idle" : ""}`}
       style={{
         position: "relative",
-        width: size + 8,
-        height,
-        filter:
-          fly === "idle"
-            ? "drop-shadow(0 6px 10px rgba(0,0,0,0.35))"
-            : undefined,
+        display: "flex",
+        flexDirection: "column-reverse",
+        alignItems: "center",
+        width: size + 4,
+        overflow: "visible",
+        filter: "none",
         animation: anim
           ? `${anim} ${CHIP_FLY_MS}ms cubic-bezier(0.22, 0.75, 0.3, 1) both`
           : undefined,
@@ -548,7 +548,7 @@ function BetChipStack({ amount, fly = "idle", size = 52, delay = 0 }) {
           edge={c.edge}
           spot={c.spot}
           size={size}
-          lift={i * step}
+          offset={i}
         />
       ))}
     </div>
@@ -566,14 +566,13 @@ function FeltHand({
   payoutAmount = 0,
   chipFly = "idle",
   flash = null,
-  revealHole = false,
   compact = false,
   ghost = false,
   role = "player",
 }) {
-  const shown = cards.map((c) =>
-    c.faceDown && !revealHole ? c : { ...c, faceDown: false }
-  );
+  // Display cards as stored — hole stays face-down until finishRoundToDealer
+  // flips it. Forcing face-up via revealHole made the flip remount start blank.
+  const shown = cards;
   const isDealer = role === "dealer";
   const isWin = status === "won" || status === "blackjack";
   const chipsCleared = chipFly === "done";
@@ -642,10 +641,12 @@ function FeltHand({
       className="bj-chip-spot bj-chip-spot-ph"
       aria-hidden
       style={{
-        minWidth: compact ? 64 : 78,
-        minHeight: compact ? 64 : 78,
+        width: compact ? 84 : 100,
+        minWidth: compact ? 84 : 100,
+        minHeight: compact ? 84 : 100,
         visibility: "hidden",
         pointerEvents: "none",
+        flexShrink: 0,
       }}
     />
   );
@@ -660,23 +661,30 @@ function FeltHand({
           alignItems: "center",
           justifyContent: "flex-end",
           gap: 4,
-          minWidth: compact ? 64 : 78,
-          minHeight: compact ? 64 : 78,
-          padding: compact ? "8px 10px 6px" : "10px 12px 8px",
-          borderRadius: "50%",
-          boxShadow:
-            "inset 0 0 0 2px color-mix(in srgb, var(--casino-accent) 55%, transparent), inset 0 0 0 5px rgba(0,0,0,0.2), 0 4px 12px rgba(0,0,0,0.25)",
+          width: compact ? 84 : 100,
+          minWidth: compact ? 84 : 100,
+          minHeight: compact ? 84 : 100,
+          padding: compact ? "12px 10px 8px" : "14px 12px 10px",
+          boxSizing: "border-box",
+          overflow: "visible",
+          position: "relative",
           transition: "opacity 0.35s ease",
           opacity: flyingAway ? 0.35 : 1,
+          flexShrink: 0,
         }}
       >
+        <div className="bj-chip-spot-ring" aria-hidden />
         <div
+          className="bj-chip-spot-stack"
           style={{
             display: "flex",
             alignItems: "flex-end",
             justifyContent: "center",
             gap: 10,
-            minHeight: compact ? 40 : 50,
+            minHeight: compact ? 48 : 56,
+            position: "relative",
+            zIndex: 1,
+            overflow: "visible",
           }}
         >
           <BetChipStack
@@ -696,7 +704,9 @@ function FeltHand({
           )}
         </div>
         {!flyingAway && (
-          <div className="bj-bet-amount">${formatMoney(bet)}</div>
+          <div className="bj-bet-amount" style={{ position: "relative", zIndex: 1 }}>
+            ${formatMoney(bet)}
+          </div>
         )}
       </div>
     ) : isDealer ? null : (
@@ -733,7 +743,6 @@ function FeltHand({
 }
 
 function Chip({ value, face, rim, ink, edge, spot, selected, onClick, disabled, size = 56 }) {
-  const spots = [0, 45, 90, 135, 180, 225, 270, 315];
   return (
     <button
       type="button"
@@ -750,6 +759,11 @@ function Chip({ value, face, rim, ink, edge, spot, selected, onClick, disabled, 
         border: `2px solid ${rim}`,
         background: `
           radial-gradient(circle at 32% 28%, rgba(255,255,255,0.35), transparent 42%),
+          repeating-conic-gradient(
+            from 0deg,
+            ${spot || rim} 0deg 18deg,
+            transparent 18deg 45deg
+          ),
           radial-gradient(circle at 50% 55%, ${face} 0%, ${edge || face} 78%)
         `,
         color: ink,
@@ -759,32 +773,13 @@ function Chip({ value, face, rim, ink, edge, spot, selected, onClick, disabled, 
         cursor: disabled ? "default" : "pointer",
         padding: 0,
         outlineOffset: 3,
-        transform: selected ? "translateY(-3px) scale(1.05)" : "none",
+        transform: selected ? "scale(1.06)" : "none",
         transition: "box-shadow 0.15s, transform 0.15s",
         opacity: disabled ? 0.4 : 1,
         overflow: "hidden",
         flexShrink: 0,
       }}
     >
-      {spots.map((deg) => (
-        <span
-          key={deg}
-          aria-hidden
-          style={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            width: size * 0.16,
-            height: size * 0.22,
-            marginLeft: -(size * 0.08),
-            marginTop: -(size * 0.11),
-            borderRadius: 2,
-            background: spot || rim,
-            transform: `rotate(${deg}deg) translateY(-${size * 0.38}px)`,
-            pointerEvents: "none",
-          }}
-        />
-      ))}
       <span
         style={{
           position: "relative",
@@ -1178,15 +1173,22 @@ export default function BlackjackGame() {
     setPhase("dealer");
 
     const id = window.setTimeout(() => {
-      // Flip hole
+      // Flip hole — keep the same dealKey so we don't remount into an
+      // opacity-0 entrance; Card picks up flipping and runs cardFlip once.
       let dealer = dealerRef.current.map((c) => ({
         ...c,
         faceDown: false,
-        flipping: c.faceDown ? true : false,
-        dealKey: c.faceDown ? `${c.dealKey}-flip` : c.dealKey,
+        flipping: !!c.faceDown,
       }));
       setDealerCards(dealer);
       dealerRef.current = dealer;
+
+      const clearFlip = window.setTimeout(() => {
+        const cleared = dealerRef.current.map((c) => ({ ...c, flipping: false }));
+        dealerRef.current = cleared;
+        setDealerCards(cleared);
+      }, DEAL_FLIGHT_MS + 60);
+      timersRef.current.push(clearFlip);
 
       const currentHands = handsRef.current;
       const needsDealerDraw = currentHands.some((h) => h.status === "standing");
@@ -1732,8 +1734,8 @@ export default function BlackjackGame() {
           100% { opacity: 1; transform: translate(0, 0) rotate(0deg) scale(1); }
         }
         @keyframes cardFlip {
-          0% { transform: rotateY(90deg) scale(0.96); opacity: 0.6; }
-          100% { transform: rotateY(0deg) scale(1); opacity: 1; }
+          0% { transform: scaleX(0.12) scale(0.96); opacity: 0.85; }
+          100% { transform: scaleX(1) scale(1); opacity: 1; }
         }
         @keyframes outcomeBurst {
           0% {
@@ -1777,44 +1779,24 @@ export default function BlackjackGame() {
               0 0 18px color-mix(in srgb, var(--casino-accent) 35%, transparent);
           }
         }
-        @keyframes chipSpotWave {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-3px); }
-        }
         @keyframes chipSpotNeon {
           0%, 100% {
-            filter: drop-shadow(0 0 0 transparent);
             box-shadow:
               inset 0 0 0 2px color-mix(in srgb, var(--casino-accent) 50%, transparent),
               inset 0 0 0 5px rgba(0,0,0,0.25),
               0 0 8px color-mix(in srgb, var(--casino-accent) 25%, transparent);
           }
           50% {
-            filter: drop-shadow(0 0 6px color-mix(in srgb, var(--casino-accent) 55%, transparent));
             box-shadow:
               inset 0 0 0 2px var(--casino-accent),
               inset 0 0 0 5px rgba(0,0,0,0.25),
               0 0 22px color-mix(in srgb, var(--casino-accent) 45%, transparent);
           }
         }
-        @keyframes chipIdleBob {
-          0%, 100% { transform: translateY(0); }
-          50% { transform: translateY(-2px); }
-        }
         @keyframes chipIdleSpinGlow {
           0% { filter: brightness(1); }
           50% { filter: brightness(1.12); }
           100% { filter: brightness(1); }
-        }
-        @keyframes chipIdleJitter {
-          0%, 100% { transform: rotate(0deg); }
-          25% { transform: rotate(-1.5deg); }
-          75% { transform: rotate(1.5deg); }
-        }
-        @keyframes chipIdleFloat {
-          0%, 100% { transform: translate(0, 0); }
-          33% { transform: translate(1px, -2px); }
-          66% { transform: translate(-1px, -1px); }
         }
         @keyframes tableBreathe {
           0%, 100% { filter: brightness(1); }
@@ -1872,41 +1854,59 @@ export default function BlackjackGame() {
           50% { filter: brightness(1.07) contrast(1.04); }
         }
         .bj-chip-spot {
-          animation: chipSpotPulse 2.4s ease-in-out infinite;
+          position: relative;
+          overflow: visible !important;
+        }
+        .bj-chip-spot-ring {
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 78%;
+          height: 78%;
+          transform: translate(-50%, -54%);
+          border-radius: 50%;
           background: radial-gradient(
             circle at 50% 45%,
             color-mix(in srgb, var(--casino-accent) 22%, transparent) 0%,
             rgba(0,0,0,0.28) 70%
-          ) !important;
+          );
+          box-shadow:
+            inset 0 0 0 2px color-mix(in srgb, var(--casino-accent) 55%, transparent),
+            inset 0 0 0 5px rgba(0,0,0,0.2),
+            0 4px 12px rgba(0,0,0,0.25);
+          pointer-events: none;
+          z-index: 0;
+          animation: chipSpotPulse 2.4s ease-in-out infinite;
+        }
+        .bj-chip-spot.is-active .bj-chip-spot-ring {
+          box-shadow:
+            inset 0 0 0 2px var(--casino-accent),
+            inset 0 0 0 5px rgba(0,0,0,0.2),
+            0 0 16px color-mix(in srgb, var(--casino-accent) 35%, transparent);
         }
         .bj-bet-stack.is-idle .bj-felt-chip {
-          animation: chipIdleBob 2.8s ease-in-out infinite;
+          /* no transform idle motion — avoids clipping */
         }
-        [data-theme="neon"] .bj-chip-spot { animation: chipSpotNeon 1.6s ease-in-out infinite; }
+        [data-theme="neon"] .bj-chip-spot-ring { animation: chipSpotNeon 1.6s ease-in-out infinite; }
+        [data-theme="desert"] .bj-chip-spot-ring { animation: chipSpotPulse 2.8s ease-in-out infinite; }
+        [data-theme="coastal"] .bj-chip-spot-ring { animation: chipSpotPulse 2.2s ease-in-out infinite; }
+        [data-theme="mountain"] .bj-chip-spot-ring { animation: chipSpotPulse 3.4s ease-in-out infinite; }
+        [data-theme="jazz"] .bj-chip-spot-ring { animation: chipSpotPulse 1.9s ease-in-out infinite; }
+        [data-theme="goldrush"] .bj-chip-spot-ring { animation: chipSpotPulse 2s ease-in-out infinite; }
+        [data-theme="midnight"] .bj-chip-spot-ring { animation: chipSpotPulse 3s ease-in-out infinite; }
         [data-theme="neon"] .bj-bet-stack.is-idle .bj-felt-chip { animation: chipIdleSpinGlow 1.4s ease-in-out infinite; }
-        [data-theme="desert"] .bj-chip-spot { animation: chipSpotWave 2.8s ease-in-out infinite, chipSpotPulse 2.8s ease-in-out infinite; }
-        [data-theme="desert"] .bj-bet-stack.is-idle .bj-felt-chip { animation: chipIdleFloat 3.2s ease-in-out infinite; }
-        [data-theme="coastal"] .bj-chip-spot { animation: chipSpotWave 2.2s ease-in-out infinite, chipSpotPulse 2.2s ease-in-out infinite; }
-        [data-theme="coastal"] .bj-bet-stack.is-idle .bj-felt-chip { animation: chipIdleBob 2.1s ease-in-out infinite; }
-        [data-theme="mountain"] .bj-chip-spot { animation: chipSpotPulse 3.4s ease-in-out infinite; }
-        [data-theme="mountain"] .bj-bet-stack.is-idle .bj-felt-chip { animation: chipIdleFloat 4s ease-in-out infinite; }
-        [data-theme="jazz"] .bj-chip-spot { animation: chipSpotPulse 1.9s ease-in-out infinite; }
-        [data-theme="jazz"] .bj-bet-stack.is-idle .bj-felt-chip { animation: chipIdleJitter 2.4s ease-in-out infinite; }
-        [data-theme="goldrush"] .bj-chip-spot { animation: chipSpotPulse 2s ease-in-out infinite; }
         [data-theme="goldrush"] .bj-bet-stack.is-idle .bj-felt-chip { animation: chipIdleSpinGlow 1.8s ease-in-out infinite; }
-        [data-theme="midnight"] .bj-chip-spot { animation: chipSpotPulse 3s ease-in-out infinite; }
-        [data-theme="midnight"] .bj-bet-stack.is-idle .bj-felt-chip { animation: chipIdleBob 3.6s ease-in-out infinite; }
-        [data-theme="velvet"] .bj-table { animation: tableBreathe 4.5s ease-in-out infinite; }
-        [data-theme="neon"] .bj-table { animation: tableNeonSweep 2.4s ease-in-out infinite; }
-        [data-theme="desert"] .bj-table {
+        [data-theme="velvet"] .bj-table-felt { animation: tableBreathe 4.5s ease-in-out infinite; }
+        [data-theme="neon"] .bj-table-felt { animation: tableNeonSweep 2.4s ease-in-out infinite; }
+        [data-theme="desert"] .bj-table-felt {
           background-size: 120% 120%;
           animation: tableDesertShimmer 6s ease-in-out infinite, tableBreathe 5s ease-in-out infinite;
         }
-        [data-theme="coastal"] .bj-table { animation: tableCoastalDrift 3.5s ease-in-out infinite, tableBreathe 4s ease-in-out infinite; }
-        [data-theme="mountain"] .bj-table { animation: tableMountainMist 5.5s ease-in-out infinite; }
-        [data-theme="jazz"] .bj-table { animation: tableJazzFlicker 3.2s ease-in-out infinite; }
-        [data-theme="goldrush"] .bj-table { animation: tableGoldSpark 2.8s ease-in-out infinite; }
-        [data-theme="midnight"] .bj-table { animation: tableMidnightPulse 4.2s ease-in-out infinite; }
+        [data-theme="coastal"] .bj-table-felt { animation: tableBreathe 4s ease-in-out infinite; }
+        [data-theme="mountain"] .bj-table-felt { animation: tableMountainMist 5.5s ease-in-out infinite; }
+        [data-theme="jazz"] .bj-table-felt { animation: tableJazzFlicker 3.2s ease-in-out infinite; }
+        [data-theme="goldrush"] .bj-table-felt { animation: tableGoldSpark 2.8s ease-in-out infinite; }
+        [data-theme="midnight"] .bj-table-felt { animation: tableMidnightPulse 4.2s ease-in-out infinite; }
         @keyframes shoeShake {
           0%, 100% { transform: rotate(-18deg) translate(0, 0); }
           15% { transform: rotate(-22deg) translate(-3px, -2px); }
@@ -2001,9 +2001,6 @@ export default function BlackjackGame() {
           opacity: 0.95;
         }
         .bj-card.is-compact .bj-card-center { font-size: 20px; }
-        .bj-chip-spot {
-          /* theme animations defined above */
-        }
         .bj-shoe {
           flex-shrink: 0;
           width: 92px;
@@ -2254,11 +2251,19 @@ export default function BlackjackGame() {
           border: none;
           position: relative;
           z-index: 2;
-          isolation: isolate;
           height: 100%;
           min-height: 0;
+          overflow: visible;
         }
         .bj-hand.is-ghost { opacity: 0.6; }
+        .bj-chip-spot,
+        .bj-chip-spot-ph {
+          overflow: visible;
+          flex-shrink: 0;
+        }
+        .bj-bet-stack {
+          overflow: visible;
+        }
         .bj-hand-dealer .bj-cards,
         .bj-hand-player .bj-cards {
           min-height: 92px !important;
@@ -2323,12 +2328,6 @@ export default function BlackjackGame() {
           color: var(--casino-accent, #C9A227);
           text-shadow: 0 1px 2px rgba(0,0,0,0.5);
           line-height: 1;
-        }
-        .bj-chip-spot.is-active {
-          box-shadow:
-            inset 0 0 0 2px var(--casino-accent),
-            inset 0 0 0 5px rgba(0,0,0,0.2),
-            0 0 16px color-mix(in srgb, var(--casino-accent) 35%, transparent) !important;
         }
         @media (prefers-reduced-motion: reduce) {
           * { animation: none !important; transition: none !important; }
@@ -2399,21 +2398,31 @@ export default function BlackjackGame() {
           height: min(560px, 62dvh);
           min-height: min(560px, 62dvh);
           max-height: min(560px, 62dvh);
-          background: radial-gradient(ellipse at 50% 40%, var(--felt-1) 0%, var(--felt-2) 55%, var(--felt-3) 100%);
+          background: transparent;
           border-radius: 32px 32px 140px 140px / 28px 28px 90px 90px;
           border: 12px solid #4A2F1A;
-          box-shadow: 0 18px 40px rgba(0,0,0,0.5), inset 0 0 70px rgba(0,0,0,0.28), inset 0 0 0 2px color-mix(in srgb, var(--casino-accent) 25%, transparent);
-          padding: clamp(14px, 2.5vw, 24px) clamp(12px, 4vw, 36px) clamp(20px, 4vw, 36px);
+          box-shadow: 0 18px 40px rgba(0,0,0,0.5);
+          padding: clamp(14px, 2.5vw, 24px) clamp(12px, 4vw, 36px) clamp(28px, 5vw, 44px);
           position: relative;
           display: grid;
           grid-template-rows: minmax(120px, 0.9fr) auto minmax(180px, 1.2fr);
           align-items: center;
           justify-items: center;
           gap: 8px;
-          overflow: hidden;
+          overflow: visible;
           flex-shrink: 0;
-          transition: background 0.55s ease;
           box-sizing: border-box;
+        }
+        .bj-table-felt {
+          position: absolute;
+          inset: 0;
+          border-radius: inherit;
+          background: radial-gradient(ellipse at 50% 40%, var(--felt-1) 0%, var(--felt-2) 55%, var(--felt-3) 100%);
+          box-shadow: inset 0 0 70px rgba(0,0,0,0.28), inset 0 0 0 2px color-mix(in srgb, var(--casino-accent) 25%, transparent);
+          pointer-events: none;
+          z-index: 0;
+          overflow: hidden;
+          transition: background 0.55s ease;
         }
         .bj-rail {
           position: absolute;
@@ -2467,16 +2476,15 @@ export default function BlackjackGame() {
           align-items: center;
           justify-content: flex-end;
           gap: 4px;
-          padding-bottom: 4px;
+          padding: 8px 4px 10px;
           align-self: stretch;
+          overflow: visible;
         }
         .bj-seats-wrap {
           width: 100%;
           height: 100%;
-          overflow-x: auto;
-          overflow-y: hidden;
-          -webkit-overflow-scrolling: touch;
-          padding: 4px 0 2px;
+          overflow: visible;
+          padding: 10px 0 6px;
           display: flex;
           align-items: flex-end;
         }
@@ -2487,7 +2495,8 @@ export default function BlackjackGame() {
           justify-content: center;
           min-width: 100%;
           height: 100%;
-          padding: 4px;
+          padding: 8px 4px;
+          overflow: visible;
         }
         .bj-seat-player,
         .bj-seat-dealer {
@@ -2498,10 +2507,15 @@ export default function BlackjackGame() {
           display: flex;
           flex-direction: column;
           gap: 10px;
-          padding: 12px;
+          padding: 14px 12px 12px;
           border: 1.5px solid rgba(232,223,199,0.35);
           border-radius: 14px;
           background: rgba(5,32,24,0.72);
+          overflow: visible;
+        }
+        .bj-controls-top {
+          overflow: visible;
+          padding: 4px 2px 2px;
         }
         .bj-actions {
           width: 100%;
@@ -2534,9 +2548,9 @@ export default function BlackjackGame() {
             height: min(420px, 52dvh);
             min-height: min(420px, 52dvh);
             max-height: min(420px, 52dvh);
-            padding: 10px 8px 14px;
+            padding: 10px 8px 20px;
             gap: 4px;
-            overflow: hidden;
+            overflow: visible;
             grid-template-rows: minmax(96px, 0.85fr) auto minmax(150px, 1.25fr);
           }
           .bj-rail {
@@ -2592,12 +2606,28 @@ export default function BlackjackGame() {
           .bj-hand-score { font-size: 18px; }
           .bj-chip-spot,
           .bj-chip-spot-ph {
-            min-width: 56px !important;
-            min-height: 56px !important;
-            padding: 6px 8px 4px !important;
+            min-width: 84px !important;
+            min-height: 84px !important;
+            width: 84px !important;
+            padding: 12px 8px 8px !important;
+            transform: none;
+            overflow: visible !important;
           }
-          .bj-chip-spot { transform: scale(0.9); }
           .bj-bet-amount { font-size: 12px; }
+          .bj-select-chip {
+            width: 44px !important;
+            height: 44px !important;
+            overflow: visible !important;
+            margin: 6px 3px !important;
+          }
+          .bj-controls {
+            padding: 12px 10px 10px !important;
+            overflow: visible !important;
+          }
+          .bj-controls-top {
+            padding: 6px 4px 2px !important;
+            overflow: visible !important;
+          }
           .bj-card { width: 44px !important; height: 62px !important; }
           .bj-card-front { padding: 3px 4px !important; }
           .bj-card-rank { font-size: 13px !important; }
@@ -2686,6 +2716,7 @@ export default function BlackjackGame() {
         </div>
 
         <div className="bj-table">
+          <div className="bj-table-felt" aria-hidden />
           <div className="bj-rail" aria-hidden />
           <div
             className="bj-table-mark"
@@ -2708,7 +2739,6 @@ export default function BlackjackGame() {
                 totalLabel={showTable ? dealerTotal : "—"}
                 active={phase === "dealer"}
                 status="active"
-                revealHole={revealHole}
                 compact={compact}
               />
             </div>
@@ -2788,12 +2818,20 @@ export default function BlackjackGame() {
               flexWrap: "wrap",
             }}
           >
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <div
+              style={{
+                display: "flex",
+                gap: 10,
+                flexWrap: "wrap",
+                alignItems: "center",
+                padding: "4px 2px",
+              }}
+            >
               {CHIP_DENOMS.map((c) => (
                 <Chip
                   key={c.value}
                   {...c}
-                  size={48}
+                  size={46}
                   selected={selectedChip === c.value}
                   disabled={phase !== "betting"}
                   onClick={() => {
