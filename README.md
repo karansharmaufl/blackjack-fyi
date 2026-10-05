@@ -1,5 +1,21 @@
-# Blackjack
+# Free Play Blackjack
 
-Classic casino blackjack — play-money chips, no signup.
+Play-money blackjack across 50 U.S. state casinos (pun names, themed tables).
 
-Single-hand table with a 6-deck shoe, 3:2 blackjack payouts, and dealer stands on soft 17.
+## Run locally
+
+```bash
+npm install
+npm run dev
+```
+
+## Build
+
+```bash
+npm run build
+npm run preview
+```
+
+## Deploy
+
+Vite app configured for Vercel (`vercel.json`).
