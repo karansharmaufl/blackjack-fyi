@@ -677,7 +677,7 @@ function ChipFace({
       height={size}
       viewBox="0 0 100 100"
       aria-hidden
-      style={{ display: "block" }}
+      style={{ display: "block", width: "100%", height: "100%" }}
     >
       <defs>
         <linearGradient id={goldId} x1="0%" y1="0%" x2="100%" y2="100%">
@@ -1166,60 +1166,63 @@ function Chip({
   size = 56,
   casinoName = "Blackjack",
 }) {
+  const ringPad = 7;
   return (
     <button
       type="button"
-      className="bj-select-chip"
+      className={`bj-select-chip${selected ? " is-selected" : ""}`}
       onClick={onClick}
       disabled={disabled}
       aria-label={`$${value} chip`}
       aria-pressed={selected}
       style={{
         position: "relative",
-        width: size,
-        height: size,
+        width: size + ringPad * 2,
+        height: size + ringPad * 2,
+        padding: ringPad,
+        boxSizing: "border-box",
         borderRadius: "50%",
         border: "none",
         background: "transparent",
-        padding: 0,
         cursor: disabled ? "default" : "pointer",
-        outlineOffset: 3,
-        transform: selected ? "scale(1.08)" : "none",
+        transform: selected ? "scale(1.05)" : "none",
         transition: "transform 0.15s, filter 0.15s",
         opacity: disabled ? 0.4 : 1,
         flexShrink: 0,
+        overflow: "visible",
         filter: selected
           ? "drop-shadow(0 5px 10px rgba(0,0,0,0.5))"
           : "drop-shadow(0 4px 8px rgba(0,0,0,0.45))",
       }}
     >
       {selected ? (
-        <span
-          aria-hidden
-          style={{
-            position: "absolute",
-            inset: -4,
-            borderRadius: "50%",
-            border: `2.5px solid ${FELT.gold}`,
-            boxShadow: `0 0 10px rgba(201,162,39,0.45)`,
-            pointerEvents: "none",
-          }}
-        />
+        <span className="bj-select-chip-ring" aria-hidden />
       ) : null}
-      <ChipFace
-        value={value}
-        band={band}
-        mark={mark}
-        markAlt={markAlt}
-        center={center}
-        ink={ink}
-        face={face}
-        rim={rim}
-        edge={edge}
-        spot={spot}
-        size={size}
-        casinoName={casinoName}
-      />
+      <span
+        className="bj-select-chip-face"
+        style={{
+          display: "block",
+          width: size,
+          height: size,
+          position: "relative",
+          borderRadius: "50%",
+        }}
+      >
+        <ChipFace
+          value={value}
+          band={band}
+          mark={mark}
+          markAlt={markAlt}
+          center={center}
+          ink={ink}
+          face={face}
+          rim={rim}
+          edge={edge}
+          spot={spot}
+          size={size}
+          casinoName={casinoName}
+        />
+      </span>
     </button>
   );
 }
@@ -3762,6 +3765,15 @@ export default function BlackjackGame() {
           border-radius: 10px;
           cursor: pointer;
         }
+        .bj-select-chip-ring {
+          position: absolute;
+          inset: 2px;
+          border-radius: 50%;
+          border: 2.5px solid var(--casino-accent, #C9A227);
+          box-shadow: 0 0 10px color-mix(in srgb, var(--casino-accent, #C9A227) 45%, transparent);
+          pointer-events: none;
+          z-index: 2;
+        }
         .bj-auto-toggle.is-on {
           color: #1A1205;
           background: linear-gradient(180deg, #C9A227 0%, #A8861A 100%);
@@ -4323,8 +4335,17 @@ export default function BlackjackGame() {
           .bj-shoe-next { height: 34px; }
           .bj-shoe-card { height: 38px; }
           .bj-select-chip {
-            width: 54px !important;
-            height: 54px !important;
+            width: auto !important;
+            height: auto !important;
+            overflow: visible !important;
+          }
+          .bj-select-chip-face {
+            width: 52px !important;
+            height: 52px !important;
+          }
+          .bj-select-chip-face svg {
+            width: 52px !important;
+            height: 52px !important;
           }
           .bj-bank-label { font-size: 10px !important; margin-bottom: 0 !important; }
           .bj-bank-value { font-size: 20px !important; }
@@ -4374,6 +4395,16 @@ export default function BlackjackGame() {
             min-height: 76px !important;
           }
           .bj-select-chip {
+            width: auto !important;
+            height: auto !important;
+            padding: 6px !important;
+            overflow: visible !important;
+          }
+          .bj-select-chip-face {
+            width: 48px !important;
+            height: 48px !important;
+          }
+          .bj-select-chip-face svg {
             width: 48px !important;
             height: 48px !important;
           }
@@ -4593,12 +4624,14 @@ export default function BlackjackGame() {
                 </span>
               </div>
               <div
+                className="bj-chip-tray"
                 style={{
                   display: "flex",
-                  gap: 10,
+                  gap: 8,
                   flexWrap: "wrap",
                   alignItems: "center",
-                  padding: "2px 0",
+                  padding: "6px 2px",
+                  overflow: "visible",
                 }}
               >
                 {tableChips.map((c) => {
