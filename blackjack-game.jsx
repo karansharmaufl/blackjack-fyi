@@ -3377,6 +3377,37 @@ export default function BlackjackGame() {
           overflow: visible;
         }
         .bj-hand.is-ghost { opacity: 0.6; }
+        .bj-hand.is-waiting {
+          opacity: 0.42;
+          filter: saturate(0.7);
+        }
+        .bj-hand.is-active {
+          z-index: 4;
+          opacity: 1;
+          filter: none;
+        }
+        .bj-hand-active-glow {
+          position: absolute;
+          inset: -4px -2px -2px;
+          border-radius: 16px;
+          border: 1.5px solid color-mix(in srgb, var(--casino-accent, #C9A227) 70%, #F0E6D2);
+          background:
+            radial-gradient(
+              ellipse at 50% 70%,
+              color-mix(in srgb, var(--casino-accent, #C9A227) 28%, transparent) 0%,
+              transparent 68%
+            );
+          box-shadow:
+            0 0 0 1px rgba(0,0,0,0.25),
+            0 0 18px color-mix(in srgb, var(--casino-accent, #C9A227) 35%, transparent);
+          pointer-events: none;
+          z-index: 0;
+          animation: bjActivePulse 1.6s ease-in-out infinite;
+        }
+        @keyframes bjActivePulse {
+          0%, 100% { opacity: 0.75; transform: scale(1); }
+          50% { opacity: 1; transform: scale(1.015); }
+        }
         .bj-chip-spot,
         .bj-chip-spot-ph {
           overflow: visible;
@@ -3413,11 +3444,27 @@ export default function BlackjackGame() {
           display: block;
         }
         .bj-hand.is-active .bj-hand-label {
-          color: var(--casino-accent, #C9A227);
+          color: #F0E6D2;
+        }
+        .bj-hand.is-active .bj-hand-total {
+          background: color-mix(in srgb, var(--casino-accent, #C9A227) 28%, rgba(5, 24, 18, 0.82));
+          border: 1px solid color-mix(in srgb, var(--casino-accent, #C9A227) 75%, transparent);
+          box-shadow: 0 0 12px color-mix(in srgb, var(--casino-accent, #C9A227) 30%, transparent);
+        }
+        .bj-hand-turn {
+          font-family: 'Bebas Neue', sans-serif;
+          font-size: 11px;
+          letter-spacing: 0.16em;
+          color: #1A1205;
+          background: var(--casino-accent, #C9A227);
+          border-radius: 4px;
+          padding: 1px 6px 0;
+          line-height: 1.35;
+          margin-left: 2px;
         }
         .bj-hand-total {
           display: flex;
-          align-items: baseline;
+          align-items: center;
           gap: 6px;
           position: relative;
           z-index: 3;
@@ -3425,6 +3472,7 @@ export default function BlackjackGame() {
           border-radius: 8px;
           background: rgba(5, 24, 18, 0.55);
           backdrop-filter: blur(2px);
+          border: 1px solid transparent;
         }
         .bj-hand-label {
           font-family: 'Bebas Neue', sans-serif;
