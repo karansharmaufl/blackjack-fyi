@@ -610,7 +610,9 @@ function FeltHand({
         justifyContent: "center",
         alignItems: "flex-end",
         minHeight: compact ? 64 : 92,
+        height: compact ? 64 : 92,
         paddingLeft: shown.length > 1 ? (compact ? 14 : 20) : 0,
+        boxSizing: "border-box",
       }}
     >
       {shown.map((c, i) => (
@@ -633,6 +635,19 @@ function FeltHand({
         </div>
       ))}
     </div>
+  );
+
+  const chipPlaceholder = (
+    <div
+      className="bj-chip-spot bj-chip-spot-ph"
+      aria-hidden
+      style={{
+        minWidth: compact ? 64 : 78,
+        minHeight: compact ? 64 : 78,
+        visibility: "hidden",
+        pointerEvents: "none",
+      }}
+    />
   );
 
   const chipSpot =
@@ -684,12 +699,16 @@ function FeltHand({
           <div className="bj-bet-amount">${formatMoney(bet)}</div>
         )}
       </div>
-    ) : null;
+    ) : isDealer ? null : (
+      chipPlaceholder
+    );
 
   const payoutTag =
     flash || (outcome && chipFly === "done") ? (
       <OutcomeBanner outcome={flash || outcome} compact={compact} />
-    ) : null;
+    ) : (
+      <div className="bj-outcome-ph" aria-hidden />
+    );
 
   return (
     <div
@@ -2167,25 +2186,30 @@ export default function BlackjackGame() {
         }
         .bj-dealer-row {
           width: 100%;
+          height: 100%;
           display: grid;
           grid-template-columns: 72px 1fr 96px;
-          align-items: flex-start;
+          align-items: center;
           justify-items: center;
           z-index: 1;
           position: relative;
-          min-height: 110px;
+          min-height: 0;
+          align-self: stretch;
         }
         .bj-dealer-row .bj-shoe {
           grid-column: 3;
           justify-self: end;
-          align-self: flex-start;
+          align-self: start;
           margin-top: 4px;
         }
         .bj-dealer-hand {
           grid-column: 2;
           display: flex;
           justify-content: center;
+          align-items: center;
           width: 100%;
+          height: 100%;
+          min-height: 0;
         }
         .bj-pays-banner {
           z-index: 1;
@@ -2193,10 +2217,13 @@ export default function BlackjackGame() {
           display: flex;
           flex-direction: column;
           align-items: center;
-          gap: 4px;
-          margin: 4px 0 2px;
+          justify-content: center;
+          gap: 2px;
+          margin: 0;
           pointer-events: none;
           text-align: center;
+          min-height: 42px;
+          flex-shrink: 0;
         }
         .bj-pays-main {
           font-family: 'Bebas Neue', sans-serif;
@@ -2217,6 +2244,7 @@ export default function BlackjackGame() {
           display: flex;
           flex-direction: column;
           align-items: center;
+          justify-content: center;
           gap: 6px;
           min-width: 96px;
           max-width: 220px;
@@ -2227,12 +2255,36 @@ export default function BlackjackGame() {
           position: relative;
           z-index: 2;
           isolation: isolate;
+          height: 100%;
+          min-height: 0;
+        }
+        .bj-hand.is-ghost { opacity: 0.6; }
+        .bj-hand-dealer .bj-cards,
+        .bj-hand-player .bj-cards {
+          min-height: 92px !important;
+          height: 92px;
         }
         .bj-hand-player .bj-cards {
           margin-bottom: 2px;
         }
         .bj-hand-player .bj-hand-total {
           margin-top: 2px;
+        }
+        .bj-outcome-ph {
+          height: 28px;
+          min-height: 28px;
+          width: 1px;
+          visibility: hidden;
+          pointer-events: none;
+        }
+        .bj-outcome-banner {
+          min-height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .bj-chip-spot-ph {
+          display: block;
         }
         .bj-hand.is-active .bj-hand-label {
           color: var(--casino-accent, #C9A227);
@@ -2344,19 +2396,24 @@ export default function BlackjackGame() {
         }
         .bj-table {
           width: 100%;
-          min-height: min(520px, 68vh);
+          height: min(560px, 62dvh);
+          min-height: min(560px, 62dvh);
+          max-height: min(560px, 62dvh);
           background: radial-gradient(ellipse at 50% 40%, var(--felt-1) 0%, var(--felt-2) 55%, var(--felt-3) 100%);
           border-radius: 32px 32px 140px 140px / 28px 28px 90px 90px;
           border: 12px solid #4A2F1A;
           box-shadow: 0 18px 40px rgba(0,0,0,0.5), inset 0 0 70px rgba(0,0,0,0.28), inset 0 0 0 2px color-mix(in srgb, var(--casino-accent) 25%, transparent);
-          padding: clamp(16px, 3vw, 28px) clamp(12px, 4vw, 36px) clamp(28px, 5vw, 48px);
+          padding: clamp(14px, 2.5vw, 24px) clamp(12px, 4vw, 36px) clamp(20px, 4vw, 36px);
           position: relative;
-          display: flex;
-          flex-direction: column;
+          display: grid;
+          grid-template-rows: minmax(120px, 0.9fr) auto minmax(180px, 1.2fr);
           align-items: center;
-          gap: 14px;
-          overflow: visible;
+          justify-items: center;
+          gap: 8px;
+          overflow: hidden;
+          flex-shrink: 0;
           transition: background 0.55s ease;
+          box-sizing: border-box;
         }
         .bj-rail {
           position: absolute;
@@ -2402,22 +2459,26 @@ export default function BlackjackGame() {
         }
         .bj-player-zone {
           width: 100%;
-          margin-top: auto;
+          height: 100%;
+          min-height: 0;
           z-index: 1;
           display: flex;
           flex-direction: column;
           align-items: center;
+          justify-content: flex-end;
           gap: 4px;
           padding-bottom: 4px;
-        }
-        .bj-player-label {
-          display: none;
+          align-self: stretch;
         }
         .bj-seats-wrap {
           width: 100%;
+          height: 100%;
           overflow-x: auto;
+          overflow-y: hidden;
           -webkit-overflow-scrolling: touch;
           padding: 4px 0 2px;
+          display: flex;
+          align-items: flex-end;
         }
         .bj-seats {
           display: flex;
@@ -2425,6 +2486,7 @@ export default function BlackjackGame() {
           align-items: flex-end;
           justify-content: center;
           min-width: 100%;
+          height: 100%;
           padding: 4px;
         }
         .bj-seat-player,
@@ -2469,10 +2531,13 @@ export default function BlackjackGame() {
           .bj-table {
             border-radius: 16px 16px 40px 40px;
             border-width: 6px;
-            min-height: 0;
+            height: min(420px, 52dvh);
+            min-height: min(420px, 52dvh);
+            max-height: min(420px, 52dvh);
             padding: 10px 8px 14px;
-            gap: 6px;
+            gap: 4px;
             overflow: hidden;
+            grid-template-rows: minmax(96px, 0.85fr) auto minmax(150px, 1.25fr);
           }
           .bj-rail {
             border-radius: 12px 12px 32px 32px;
@@ -2487,7 +2552,7 @@ export default function BlackjackGame() {
             transform: scale(0.82);
             transform-origin: top right;
           }
-          .bj-pays-banner { margin: 0; gap: 1px; }
+          .bj-pays-banner { margin: 0; gap: 1px; min-height: 32px; }
           .bj-pays-main {
             font-size: 14px;
             letter-spacing: 0.08em;
@@ -2509,18 +2574,29 @@ export default function BlackjackGame() {
             gap: 4px;
             padding: 2px;
           }
+          .bj-hand-dealer .bj-cards,
+          .bj-hand-player .bj-cards {
+            min-height: 62px !important;
+            height: 62px !important;
+          }
+          .bj-outcome-ph,
+          .bj-outcome-banner {
+            min-height: 22px;
+            height: 22px;
+          }
           .bj-hand-total {
             padding: 1px 6px;
             gap: 4px;
           }
           .bj-hand-label { font-size: 11px; letter-spacing: 0.1em; }
           .bj-hand-score { font-size: 18px; }
-          .bj-chip-spot {
+          .bj-chip-spot,
+          .bj-chip-spot-ph {
             min-width: 56px !important;
             min-height: 56px !important;
             padding: 6px 8px 4px !important;
-            transform: scale(0.9);
           }
+          .bj-chip-spot { transform: scale(0.9); }
           .bj-bet-amount { font-size: 12px; }
           .bj-card { width: 44px !important; height: 62px !important; }
           .bj-card-front { padding: 3px 4px !important; }
@@ -2571,11 +2647,21 @@ export default function BlackjackGame() {
         @media (max-width: 640px) and (max-height: 780px) {
           .bj-title { display: none; }
           .bj-pays-rules { display: none; }
-          .bj-table { padding: 8px 6px 10px; gap: 4px; }
+          .bj-table {
+            height: min(360px, 48dvh);
+            min-height: min(360px, 48dvh);
+            max-height: min(360px, 48dvh);
+            padding: 8px 6px 10px;
+            gap: 4px;
+          }
           .bj-card { width: 40px !important; height: 56px !important; }
           .bj-card-rank { font-size: 12px !important; }
           .bj-card-center { font-size: 14px !important; }
-          .bj-cards { min-height: 56px !important; }
+          .bj-hand-dealer .bj-cards,
+          .bj-hand-player .bj-cards {
+            min-height: 56px !important;
+            height: 56px !important;
+          }
         }
       `}</style>
 
