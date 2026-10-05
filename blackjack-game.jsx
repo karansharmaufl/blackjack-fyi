@@ -2101,7 +2101,7 @@ export default function BlackjackGame() {
 
   const revealHole = phase === "dealer" || phase === "settle";
   const seatCount = phase === "betting" ? handCount : Math.max(hands.length, 1);
-  const compact = seatCount >= 3 || isNarrow;
+  const compact = seatCount >= 3;
 
   const dealerTotal = useMemo(() => {
     if (dealerCards.length === 0) return "—";
@@ -4130,13 +4130,13 @@ export default function BlackjackGame() {
           .bj-table {
             border-radius: 16px 16px 40px 40px;
             border-width: 6px;
-            height: min(420px, 52dvh);
-            min-height: min(420px, 52dvh);
-            max-height: min(420px, 52dvh);
+            height: min(480px, 58dvh);
+            min-height: min(480px, 58dvh);
+            max-height: min(480px, 58dvh);
             padding: 10px 8px 20px;
             gap: 4px;
             overflow: visible;
-            grid-template-rows: minmax(96px, 0.85fr) auto minmax(150px, 1.25fr);
+            grid-template-rows: minmax(120px, 0.9fr) auto minmax(180px, 1.3fr);
           }
           .bj-rail {
             border-radius: 12px 12px 32px 32px;
@@ -4178,8 +4178,8 @@ export default function BlackjackGame() {
           }
           .bj-hand-dealer .bj-cards,
           .bj-hand-player .bj-cards {
-            min-height: 62px !important;
-            height: 62px !important;
+            min-height: 96px !important;
+            height: 96px !important;
           }
           .bj-outcome-ph,
           .bj-outcome-banner {
@@ -4216,16 +4216,26 @@ export default function BlackjackGame() {
             padding: 6px 4px 2px !important;
             overflow: visible !important;
           }
-          .bj-card { width: 44px !important; height: 62px !important; }
-          .bj-card-front { padding: 3px 4px !important; }
-          .bj-card-rank { font-size: 13px !important; }
-          .bj-card-suit { font-size: 9px !important; }
-          .bj-card-center { font-size: 16px !important; }
-          .bj-card-back-inner { width: 46%; height: 54%; }
-          .bj-card-back-motif { width: 8px; height: 8px; }
+          .bj-card { width: 68px !important; height: 96px !important; }
+          .bj-card.is-compact { width: 56px !important; height: 80px !important; }
+          .bj-card-front { padding: 5px 6px !important; }
+          .bj-card-rank { font-size: 18px !important; }
+          .bj-card.is-compact .bj-card-rank { font-size: 15px !important; }
+          .bj-card-suit { font-size: 12px !important; }
+          .bj-card.is-compact .bj-card-suit { font-size: 10px !important; }
+          .bj-card-center { font-size: 26px !important; }
+          .bj-card.is-compact .bj-card-center { font-size: 20px !important; }
+          .bj-card-back-inner { width: 48%; height: 56%; }
+          .bj-card-back-motif { width: 10px; height: 10px; }
           .bj-cards {
-            min-height: 62px !important;
+            min-height: 96px !important;
             padding-left: 0 !important;
+          }
+          .bj-cards > div {
+            margin-left: -26px !important;
+          }
+          .bj-cards > div:first-child {
+            margin-left: 0 !important;
           }
           .bj-shoe { width: 58px; height: 78px; }
           .bj-shoe-shell { width: 54px; height: 72px; }
@@ -4271,19 +4281,24 @@ export default function BlackjackGame() {
           .bj-title { display: none; }
           .bj-pays-rules { display: none; }
           .bj-table {
-            height: min(360px, 48dvh);
-            min-height: min(360px, 48dvh);
-            max-height: min(360px, 48dvh);
-            padding: 8px 6px 10px;
+            height: min(420px, 54dvh);
+            min-height: min(420px, 54dvh);
+            max-height: min(420px, 54dvh);
+            padding: 8px 6px 12px;
             gap: 4px;
+            grid-template-rows: minmax(110px, 0.9fr) auto minmax(170px, 1.3fr);
           }
-          .bj-card { width: 40px !important; height: 56px !important; }
-          .bj-card-rank { font-size: 12px !important; }
-          .bj-card-center { font-size: 14px !important; }
+          .bj-card { width: 60px !important; height: 86px !important; }
+          .bj-card.is-compact { width: 52px !important; height: 74px !important; }
+          .bj-card-rank { font-size: 16px !important; }
+          .bj-card.is-compact .bj-card-rank { font-size: 14px !important; }
+          .bj-card-center { font-size: 22px !important; }
+          .bj-card.is-compact .bj-card-center { font-size: 18px !important; }
           .bj-hand-dealer .bj-cards,
-          .bj-hand-player .bj-cards {
-            min-height: 56px !important;
-            height: 56px !important;
+          .bj-hand-player .bj-cards,
+          .bj-cards {
+            min-height: 86px !important;
+            height: 86px !important;
           }
         }
       `}</style>
