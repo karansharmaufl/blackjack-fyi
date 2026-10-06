@@ -3777,7 +3777,7 @@ export default function BlackjackGame() {
           box-sizing: border-box;
         }
         .bj-pays-banner {
-          z-index: 1;
+          z-index: 2;
           position: relative;
           display: flex;
           flex-direction: column;
@@ -4886,16 +4886,19 @@ export default function BlackjackGame() {
           flex-wrap: nowrap;
           gap: 8px;
           padding: 0 8px;
-          opacity: 0;
-          visibility: hidden;
+          opacity: 1;
+          visibility: visible;
           pointer-events: none;
-          transition: opacity 0.15s ease;
+          transition: opacity 0.15s ease, filter 0.15s ease;
           flex-shrink: 0;
         }
         .bj-chip-tray.is-live {
-          opacity: 1;
-          visibility: visible;
           pointer-events: auto;
+        }
+        .bj-chip-tray.is-idle {
+          opacity: 0.45;
+          filter: saturate(0.85);
+          pointer-events: none;
         }
         .bj-bet-targets.is-spacer {
           visibility: hidden;
@@ -5416,7 +5419,7 @@ export default function BlackjackGame() {
             ) : null}
             <div className="bj-dock-stage">
               <div
-                className={`bj-chip-tray${phase === "betting" ? " is-live" : ""}`}
+                className={`bj-chip-tray${phase === "betting" ? " is-live" : " is-idle"}`}
                 aria-hidden={phase !== "betting"}
               >
                 {tableChips.map((c) => {
