@@ -101,6 +101,8 @@ function noise({
   filterType = "bandpass",
   q = 0.9,
   freqSlide = null,
+  attack = null,
+  curve = 1.8,
 }) {
   if (!enabled) return;
   try {
@@ -111,8 +113,8 @@ function noise({
     const buf = c.createBuffer(1, len, c.sampleRate);
     const data = buf.getChannelData(0);
     for (let i = 0; i < len; i += 1) {
-      // Soft paper-ish grain: mix white + gentle roll-off envelope
-      const env = Math.pow(1 - i / len, 1.35);
+      // Cardstock grain: white noise with a fast paper decay
+      const env = Math.pow(1 - i / len, curve);
       data[i] = (Math.random() * 2 - 1) * env;
     }
     const src = c.createBufferSource();
@@ -127,7 +129,8 @@ function noise({
       );
     }
     filter.Q.value = q;
-    const g = envGain(gain, Math.min(0.02, duration * 0.25), gain * 0.5, duration, t0);
+    const atk = attack != null ? attack : Math.min(0.012, duration * 0.2);
+    const g = envGain(gain, atk, gain * 0.45, duration, t0);
     if (!g) return;
     src.connect(filter);
     filter.connect(g);
@@ -138,46 +141,71 @@ function noise({
   }
 }
 
-/** Slow card slide across felt: soft whoosh + gentle land. */
+/**
+ * Card pulled from a shoe: sharp lip slip → short scrape → soft felt land.
+ * (Not a long felt whoosh.)
+ */
 function cardFlick({ land = true, brighter = false } = {}) {
   if (!enabled) return;
   const jitter = () => (Math.random() - 0.5);
-  // Long soft scrape (not a snap)
+
+  // 1) Snap / slip off the shoe lip — crisp, short, high
   noise({
-    duration: 0.16 + Math.random() * 0.04,
-    gain: brighter ? 0.038 : 0.032,
-    band: (brighter ? 2200 : 1800) + jitter() * 250,
+    duration: 0.028 + Math.random() * 0.012,
+    gain: brighter ? 0.07 : 0.058,
+    band: (brighter ? 4200 : 3400) + jitter() * 400,
     filterType: "bandpass",
-    q: 0.45,
-    freqSlide: brighter ? 900 : 700,
+    q: 2.4,
+    freqSlide: brighter ? 2600 : 2100,
+    attack: 0.0015,
+    curve: 3.2,
   });
-  // Airy paper trail
+
+  // 2) Card leaving the shoe — dry cardboard scrape
   noise({
-    duration: 0.14,
-    gain: 0.022,
-    delay: 0.04,
-    band: 900 + jitter() * 120,
-    filterType: "lowpass",
-    q: 0.6,
-    freqSlide: 320,
+    duration: 0.07 + Math.random() * 0.025,
+    gain: brighter ? 0.048 : 0.04,
+    delay: 0.012,
+    band: (brighter ? 2100 : 1650) + jitter() * 180,
+    filterType: "bandpass",
+    q: 1.1,
+    freqSlide: brighter ? 1100 : 850,
+    attack: 0.004,
+    curve: 2.4,
   });
+
+  // 3) Thin paper edge hiss (keeps it from sounding like wind)
+  noise({
+    duration: 0.05,
+    gain: 0.018,
+    delay: 0.02,
+    band: 5200 + jitter() * 300,
+    filterType: "highpass",
+    q: 0.7,
+    freqSlide: 2800,
+    attack: 0.002,
+    curve: 2.8,
+  });
+
   if (land) {
-    // Soft felt settle
+    // Soft slap onto felt
     tone({
-      freq: 140 + jitter() * 12,
-      duration: 0.14,
-      type: "sine",
-      gain: 0.022,
-      delay: 0.1,
-      slideTo: 80,
+      freq: 165 + jitter() * 18,
+      duration: 0.055,
+      type: "triangle",
+      gain: 0.028,
+      delay: 0.055,
+      slideTo: 95,
     });
     noise({
-      duration: 0.09,
-      gain: 0.016,
-      delay: 0.11,
-      band: 220,
+      duration: 0.045,
+      gain: 0.022,
+      delay: 0.058,
+      band: 380,
       filterType: "lowpass",
-      q: 0.5,
+      q: 0.8,
+      attack: 0.002,
+      curve: 2.6,
     });
   }
 }

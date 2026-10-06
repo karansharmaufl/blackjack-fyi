@@ -7,6 +7,13 @@ import {
   setSoundEnabled,
   playSettleSounds,
 } from "./sounds.js";
+import {
+  loadPreferences,
+  savePreferences,
+  clearPreferences,
+  casinoFromPreferences,
+  hasCompletedSetup,
+} from "./preferences.js";
 
 const FELT = {
   mark: "#E8DFC7",
@@ -1419,6 +1426,7 @@ function CasinoSelectScreen({
   query,
   onQuery,
   onClose,
+  setupMode = false,
 }) {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -1582,10 +1590,16 @@ function CasinoSelectScreen({
         <div className="bj-casino-panel">
           <div className="bj-casino-head">
             <div>
-              <div className="bj-casino-title">SWITCH CASINO</div>
-              <div className="bj-casino-sub">50 states · pick a city floor</div>
+              <div className="bj-casino-title">
+                {setupMode ? "CHOOSE CASINO" : "SWITCH CASINO"}
+              </div>
+              <div className="bj-casino-sub">
+                {setupMode
+                  ? "Pick your house — saved for next visit"
+                  : "50 states · pick a city floor"}
+              </div>
             </div>
-            {onClose ? (
+            {onClose && !setupMode ? (
               <button
                 type="button"
                 className="bj-casino-close"
@@ -1674,6 +1688,9 @@ function SettingsPanel({
   onRestart,
   onEndSession,
   canEndSession,
+  setupMode = false,
+  onSetupContinue,
+  onResetPreferences,
 }) {
   if (!open) return null;
   return (
@@ -1681,14 +1698,22 @@ function SettingsPanel({
       <div className="bj-settings-panel">
         <div className="bj-settings-head">
           <div>
-            <div className="bj-settings-title">TABLE RULES</div>
+            <div className="bj-settings-title">
+              {setupMode ? "WELCOME · TABLE RULES" : "TABLE RULES"}
+            </div>
             <div className="bj-settings-sub">
-              {canEdit ? "Changes apply to the next deal" : "Finish the hand to edit rules"}
+              {setupMode
+                ? "Set your house rules — we’ll remember them next time"
+                : canEdit
+                  ? "Changes apply to the next deal"
+                  : "Finish the hand to edit rules"}
             </div>
           </div>
-          <button type="button" className="bj-settings-close" onClick={onClose} aria-label="Close">
-            ×
-          </button>
+          {!setupMode ? (
+            <button type="button" className="bj-settings-close" onClick={onClose} aria-label="Close">
+              ×
+            </button>
+          ) : null}
         </div>
 
         <div className="bj-settings-body">
@@ -1858,41 +1883,75 @@ function SettingsPanel({
         </div>
 
         <div className="bj-settings-foot">
-          {canEndSession ? (
-            <button
-              type="button"
-              className="bj-settings-restart"
-              style={{ borderColor: "rgba(232,223,199,0.45)", background: "transparent", color: "#F0E6D2" }}
-              onClick={onEndSession}
-            >
-              END SESSION · VIEW ANALYTICS
-            </button>
-          ) : null}
+          {setupMode ? (
+            <>
+              <button
+                type="button"
+                className="bj-settings-restart"
+                onClick={onSetupContinue}
+              >
+                CONTINUE · CHOOSE CASINO
+              </button>
+              <div className="bj-settings-hint">
+                Next you’ll pick a casino floor. Preferences are saved in this browser.
+              </div>
+            </>
+          ) : (
+            <>
+              {canEndSession ? (
+                <button
+                  type="button"
+                  className="bj-settings-restart"
+                  style={{ borderColor: "rgba(232,223,199,0.45)", background: "transparent", color: "#F0E6D2" }}
+                  onClick={onEndSession}
+                >
+                  END SESSION · VIEW ANALYTICS
+                </button>
+              ) : null}
 
-          <button
-            type="button"
-            className="bj-settings-restart"
-            disabled={!canEdit}
-            onClick={onRestart}
-          >
-            RESTART GAME
-          </button>
-          <button
-            type="button"
-            className="bj-settings-restart"
-            style={{
-              borderColor: "rgba(232,223,199,0.35)",
-              background: "transparent",
-              color: "#F0E6D2",
-              boxShadow: "none",
-            }}
-            onClick={onClose}
-          >
-            DONE
-          </button>
-          <div className="bj-settings-hint">
-            Rule toggles apply on the next deal. Restart resets the bank and shoe.
-          </div>
+              <button
+                type="button"
+                className="bj-settings-restart"
+                disabled={!canEdit}
+                onClick={onRestart}
+              >
+                RESTART GAME
+              </button>
+              <button
+                type="button"
+                className="bj-settings-restart"
+                style={{
+                  borderColor: "rgba(232,223,199,0.35)",
+                  background: "transparent",
+                  color: "#F0E6D2",
+                  boxShadow: "none",
+                }}
+                onClick={onClose}
+              >
+                DONE
+              </button>
+              {onResetPreferences ? (
+                <button
+                  type="button"
+                  className="bj-settings-restart"
+                  style={{
+                    borderColor: "rgba(226,85,85,0.45)",
+                    background: "transparent",
+                    color: "#E8A0A0",
+                    boxShadow: "none",
+                  }}
+                  disabled={!canEdit}
+                  onClick={onResetPreferences}
+                >
+                  RESET SAVED PREFERENCES
+                </button>
+              ) : null}
+              <div className="bj-settings-hint">
+                Rule toggles apply on the next deal. Restart resets the bank and shoe.
+                Reset preferences clears this browser’s saved casino and rules.
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -2145,22 +2204,41 @@ function CutOverlay({ onCut }) {
 }
 
 export default function BlackjackGame() {
-  const [casino, setCasino] = useState(getDefaultCasino);
-  const [draftCasino, setDraftCasino] = useState(getDefaultCasino);
+  const initialPrefs = useMemo(() => loadPreferences(), []);
+  const setupDoneInitially = hasCompletedSetup(initialPrefs);
+  const initialCasino = useMemo(
+    () => casinoFromPreferences(initialPrefs),
+    [initialPrefs]
+  );
+
+  const [casino, setCasino] = useState(initialCasino);
+  const [draftCasino, setDraftCasino] = useState(initialCasino);
   const [casinoQuery, setCasinoQuery] = useState("");
+  /** null | "settings" | "casino" — first-run onboarding */
+  const [setupStep, setSetupStep] = useState(() =>
+    setupDoneInitially ? null : "settings"
+  );
   const [pickingCasino, setPickingCasino] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [bjPayout, setBjPayout] = useState("3:2");
-  const [hitSoft17, setHitSoft17] = useState(false);
-  const [deckCount, setDeckCount] = useState(DEFAULT_DECKS);
-  const [playerCut, setPlayerCut] = useState(true);
-  const [autoDeal, setAutoDeal] = useState(false);
-  const [soundEnabled, setSoundOn] = useState(getSoundEnabled);
-  const [sideBetsEnabled, setSideBetsEnabled] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(() => !setupDoneInitially);
+  const [bjPayout, setBjPayout] = useState(initialPrefs.bjPayout);
+  const [hitSoft17, setHitSoft17] = useState(initialPrefs.hitSoft17);
+  const [deckCount, setDeckCount] = useState(initialPrefs.deckCount);
+  const [playerCut, setPlayerCut] = useState(initialPrefs.playerCut);
+  const [autoDeal, setAutoDeal] = useState(initialPrefs.autoDeal);
+  const [soundEnabled, setSoundOn] = useState(() =>
+    setupDoneInitially ? initialPrefs.soundEnabled : getSoundEnabled()
+  );
+  const [sideBetsEnabled, setSideBetsEnabled] = useState(
+    initialPrefs.sideBetsEnabled
+  );
+
+  useEffect(() => {
+    if (setupDoneInitially) setSoundEnabled(initialPrefs.soundEnabled);
+  }, [setupDoneInitially, initialPrefs.soundEnabled]);
   const [isNarrow, setIsNarrow] = useState(false);
   const [phase, setPhase] = useState("betting");
-  const [betAmount, setBetAmount] = useState(() => getDefaultCasino().minBet);
-  const [lastChip, setLastChip] = useState(() => getDefaultCasino().minBet);
+  const [betAmount, setBetAmount] = useState(() => initialCasino.minBet);
+  const [lastChip, setLastChip] = useState(() => initialCasino.minBet);
   const [sideBetPairs, setSideBetPairs] = useState(0);
   const [sideBet213, setSideBet213] = useState(0);
   const [betTarget, setBetTarget] = useState("main");
@@ -2187,11 +2265,12 @@ export default function BlackjackGame() {
   const shoeRef = useRef([]);
   const reshuffleAtRef = useRef(Math.floor(DEFAULT_DECKS * 52 * 0.25));
   const rulesRef = useRef({
-    bjPayout: "3:2",
-    hitSoft17: false,
-    deckCount: DEFAULT_DECKS,
-    playerCut: true,
+    bjPayout: initialPrefs.bjPayout,
+    hitSoft17: initialPrefs.hitSoft17,
+    deckCount: initialPrefs.deckCount,
+    playerCut: initialPrefs.playerCut,
   });
+  const prefsReadyRef = useRef(setupDoneInitially);
   const timersRef = useRef([]);
   const handsRef = useRef([]);
   const dealerRef = useRef([]);
@@ -2373,6 +2452,58 @@ export default function BlackjackGame() {
     setSoundOn(on);
   }, []);
 
+  const persistPreferences = useCallback(
+    (extra = {}) => {
+      if (!prefsReadyRef.current && !extra.setupComplete) return;
+      savePreferences({
+        setupComplete: true,
+        casinoAbbr: casino.abbr,
+        bjPayout,
+        hitSoft17,
+        deckCount,
+        playerCut,
+        autoDeal,
+        sideBetsEnabled,
+        soundEnabled,
+        ...extra,
+      });
+      prefsReadyRef.current = true;
+    },
+    [
+      casino.abbr,
+      bjPayout,
+      hitSoft17,
+      deckCount,
+      playerCut,
+      autoDeal,
+      sideBetsEnabled,
+      soundEnabled,
+    ]
+  );
+
+  useEffect(() => {
+    if (!prefsReadyRef.current || setupStep) return;
+    persistPreferences();
+  }, [
+    bjPayout,
+    hitSoft17,
+    deckCount,
+    playerCut,
+    autoDeal,
+    sideBetsEnabled,
+    soundEnabled,
+    casino.abbr,
+    setupStep,
+    persistPreferences,
+  ]);
+
+  const finishSetupSettings = () => {
+    setSettingsOpen(false);
+    setSetupStep("casino");
+    setDraftCasino(casino);
+    setPickingCasino(true);
+  };
+
   useEffect(() => {
     const unlock = () => unlockAudio();
     window.addEventListener("pointerdown", unlock, { once: true });
@@ -2476,10 +2607,11 @@ export default function BlackjackGame() {
     [beginPlayerCut]
   );
 
-  // First visit: shuffle then cut before any deal (module flag survives Strict Mode)
+  // After setup (or on return visits): shuffle → burn cut → then first deal is available
   useEffect(() => {
+    if (setupStep) return undefined; // wait until settings + casino are done
     if (shoeSessionBootstrapped) {
-      // Remount after boot timers were cleared — recover with cut (or shoe) once
+      // Remount / post-reset recovery — cut (or load shoe) once the table is ready
       if (!shoeRef.current.length && shuffleStage === "idle" && !shuffling) {
         const shoe = buildRiffleShoe(rulesRef.current.deckCount);
         if (rulesRef.current.playerCut) beginPlayerCut(shoe, { dealAfter: false });
@@ -2494,9 +2626,8 @@ export default function BlackjackGame() {
     shoeSessionBootstrapped = true;
     runShuffleCeremony({ dealAfter: false, resetBank: false });
     return undefined;
-    // intentionally once on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [setupStep]);
 
   const finishRoundToDealer = useCallback(() => {
     setPhase("dealer");
@@ -3244,6 +3375,64 @@ export default function BlackjackGame() {
     setLastChip(tray[0]?.value ?? c.minBet);
     const maxHands = Math.max(1, Math.floor(bank / c.minBet) || 1);
     if (handCount > maxHands) setHandCount(maxHands);
+    if (setupStep === "casino") {
+      setSetupStep(null);
+      prefsReadyRef.current = true;
+      savePreferences({
+        setupComplete: true,
+        casinoAbbr: c.abbr,
+        bjPayout,
+        hitSoft17,
+        deckCount,
+        playerCut,
+        autoDeal,
+        sideBetsEnabled,
+        soundEnabled,
+      });
+    } else if (prefsReadyRef.current) {
+      savePreferences({ casinoAbbr: c.abbr, setupComplete: true });
+    }
+  };
+
+  const resetSavedPreferences = () => {
+    if (!canEditSettings) return;
+    clearPreferences();
+    prefsReadyRef.current = false;
+    shoeSessionBootstrapped = false;
+    const fallback = getDefaultCasino();
+    clearTimers();
+    setAnalytics(null);
+    setAutoDeal(false);
+    autoDealRef.current = false;
+    setCasino(fallback);
+    setDraftCasino(fallback);
+    setCasinoQuery("");
+    setBjPayout("3:2");
+    setHitSoft17(false);
+    setDeckCount(DEFAULT_DECKS);
+    setPlayerCut(true);
+    setSideBetsOn(false);
+    setSoundPreference(true);
+    setBetAmount(fallback.minBet);
+    setLastChip(fallback.minBet);
+    setHandCount(1);
+    setBank(STARTING_BANK);
+    bankRef.current = STARTING_BANK;
+    resetSessionStats(STARTING_BANK);
+    setHands([]);
+    handsRef.current = [];
+    setDealerCards([]);
+    dealerRef.current = [];
+    setChipFlyPhase("idle");
+    setSideChipFly("idle");
+    setPhase("betting");
+    setShuffling(false);
+    setShuffleStage("idle");
+    shoeRef.current = [];
+    setShoeRemaining(0);
+    setSetupStep("settings");
+    setPickingCasino(false);
+    setSettingsOpen(true);
   };
 
   const theme = getCasinoTheme(casino);
@@ -4889,16 +5078,10 @@ export default function BlackjackGame() {
           opacity: 1;
           visibility: visible;
           pointer-events: none;
-          transition: opacity 0.15s ease, filter 0.15s ease;
           flex-shrink: 0;
         }
         .bj-chip-tray.is-live {
           pointer-events: auto;
-        }
-        .bj-chip-tray.is-idle {
-          opacity: 0.45;
-          filter: saturate(0.85);
-          pointer-events: none;
         }
         .bj-bet-targets.is-spacer {
           visibility: hidden;
@@ -5419,7 +5602,7 @@ export default function BlackjackGame() {
             ) : null}
             <div className="bj-dock-stage">
               <div
-                className={`bj-chip-tray${phase === "betting" ? " is-live" : " is-idle"}`}
+                className={`bj-chip-tray${phase === "betting" ? " is-live" : ""}`}
                 aria-hidden={phase !== "betting"}
               >
                 {tableChips.map((c) => {
@@ -5441,17 +5624,25 @@ export default function BlackjackGame() {
                   const nextPerHand = nextMain + nextPairs + nextPlus3;
                   const wouldExceedMax = nextTargetAmt > casino.maxBet;
                   const wouldExceedBank = nextPerHand * handCount > bank;
+                  // Keep full opacity during deal/play; only dim unaffordable chips while betting.
                   const chipDisabled =
-                    phase !== "betting" || wouldExceedMax || wouldExceedBank;
+                    phase === "betting" && (wouldExceedMax || wouldExceedBank);
                   return (
                     <Chip
                       key={c.value}
                       {...c}
                       size={48}
                       casinoName={casino.name}
-                      selected={lastChip === c.value && activeSideAmount > 0}
+                      selected={
+                        phase === "betting" &&
+                        lastChip === c.value &&
+                        activeSideAmount > 0
+                      }
                       disabled={chipDisabled}
-                      onClick={() => addChipToBet(c.value)}
+                      onClick={() => {
+                        if (phase !== "betting") return;
+                        addChipToBet(c.value);
+                      }}
                     />
                   );
                 })}
@@ -5576,23 +5767,31 @@ export default function BlackjackGame() {
       </div>
       </div>
 
-      {pickingCasino ? (
+      {pickingCasino || setupStep === "casino" ? (
         <CasinoSelectScreen
           selected={draftCasino}
           onSelect={setDraftCasino}
           onEnter={applyCasino}
-          onClose={() => {
-            setDraftCasino(casino);
-            setPickingCasino(false);
-          }}
+          setupMode={setupStep === "casino"}
+          onClose={
+            setupStep === "casino"
+              ? undefined
+              : () => {
+                  setDraftCasino(casino);
+                  setPickingCasino(false);
+                }
+          }
           query={casinoQuery}
           onQuery={setCasinoQuery}
         />
       ) : null}
 
       <SettingsPanel
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
+        open={settingsOpen || setupStep === "settings"}
+        onClose={() => {
+          if (setupStep === "settings") return;
+          setSettingsOpen(false);
+        }}
         bjPayout={bjPayout}
         onBjPayout={setBjPayout}
         hitSoft17={hitSoft17}
@@ -5607,10 +5806,13 @@ export default function BlackjackGame() {
         onSoundEnabled={setSoundPreference}
         sideBetsEnabled={sideBetsEnabled}
         onSideBetsEnabled={setSideBetsOn}
-        canEdit={canEditSettings}
+        canEdit={canEditSettings || setupStep === "settings"}
         onRestart={handleRestartGame}
         onEndSession={() => endSession("manual")}
         canEndSession={sessionStats.rounds > 0 && phase === "betting"}
+        setupMode={setupStep === "settings"}
+        onSetupContinue={finishSetupSettings}
+        onResetPreferences={resetSavedPreferences}
       />
 
       <AnalyticsOverlay
