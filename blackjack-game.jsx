@@ -563,14 +563,15 @@ function OutcomeBanner({ outcome, compact = false, text: textOverride = null }) 
       className="bj-outcome-banner"
       style={{
         fontFamily: "'Bebas Neue', sans-serif",
-        fontSize: compact ? (long ? 13 : 20) : long ? 18 : 28,
-        letterSpacing: long ? 1.2 : 4,
+        fontSize: compact ? (long ? 12 : 16) : long ? 16 : 22,
+        letterSpacing: long ? 1.2 : 3,
         color: cfg.color,
         textShadow: `0 0 14px ${cfg.glow}, 0 2px 4px rgba(0,0,0,0.65)`,
         animation: "outcomeBurst 0.55s cubic-bezier(0.2, 1.2, 0.3, 1) both",
         lineHeight: 1,
         textAlign: "center",
         whiteSpace: "nowrap",
+        transformOrigin: "center bottom",
       }}
     >
       {displayText}
@@ -981,6 +982,29 @@ function BetChipStack({
   );
 }
 
+function cardFanOverlap(count, cardW, { seatCount = 1, isDealer = false, compact = false } = {}) {
+  if (count <= 1) return 0;
+  const vw =
+    typeof window !== "undefined" ? Math.max(320, window.innerWidth) : 400;
+  // Match CSS breakpoint card widths so fan math matches what actually paints.
+  const paintedW =
+    vw <= 640 ? (compact ? (vw <= 380 ? 66 : 70) : vw <= 700 ? 78 : 86) : cardW;
+  const seats = Math.max(1, seatCount);
+  const budget = isDealer
+    ? Math.min(vw - 100, 520)
+    : seats === 1
+      ? Math.min(vw - 48, 440)
+      : Math.min((vw - 28 - (seats - 1) * 8) / seats, seats === 2 ? 180 : 150);
+  const minPeek = Math.max(14, Math.round(paintedW * 0.14));
+  const maxPeek = Math.round(
+    paintedW * (count <= 2 ? 0.62 : count <= 3 ? 0.48 : count <= 4 ? 0.36 : 0.28)
+  );
+  let peek = (budget - paintedW) / (count - 1);
+  if (!Number.isFinite(peek)) peek = maxPeek;
+  peek = Math.max(minPeek, Math.min(maxPeek, peek));
+  return Math.round(paintedW - peek);
+}
+
 function FeltHand({
   label,
   cards,
@@ -1000,11 +1024,18 @@ function FeltHand({
   ghost = false,
   role = "player",
   casinoName = "Blackjack",
+  seatCount = 1,
 }) {
   // Display cards as stored — hole stays face-down until finishRoundToDealer
   // flips it. Forcing face-up via revealHole made the flip remount start blank.
   const shown = cards;
   const isDealer = role === "dealer";
+  const cardW = compact ? 80 : 104;
+  const fanOverlap = cardFanOverlap(shown.length, cardW, {
+    seatCount,
+    isDealer,
+    compact,
+  });
   const isWin = status === "won" || status === "blackjack";
   const chipsCleared = chipFly === "done";
   const showPayStack =
@@ -1078,12 +1109,14 @@ function FeltHand({
   const cardRow = (
     <div
       className="bj-cards"
+      data-count={shown.length}
       style={{
         display: "flex",
         justifyContent: "center",
         alignItems: "flex-end",
         minHeight: compact ? 112 : 146,
         height: compact ? 112 : 146,
+        maxWidth: "100%",
         boxSizing: "border-box",
       }}
     >
@@ -1091,7 +1124,7 @@ function FeltHand({
         <div
           key={c.dealKey || `${c.rank}-${c.suit}-${i}`}
           style={{
-            marginLeft: i === 0 ? 0 : compact ? -30 : -38,
+            marginLeft: i === 0 ? 0 : -fanOverlap,
             zIndex: i + 1,
             position: "relative",
           }}
@@ -3252,12 +3285,12 @@ export default function BlackjackGame() {
         @keyframes outcomeBurst {
           0% {
             opacity: 0;
-            transform: scale(0.55) translateY(10px);
+            transform: scale(0.7) translateY(6px);
             filter: blur(2px);
           }
           55% {
             opacity: 1;
-            transform: scale(1.12) translateY(0);
+            transform: scale(1.04) translateY(0);
             filter: blur(0);
           }
           100% {
@@ -3818,8 +3851,8 @@ export default function BlackjackGame() {
           align-items: center;
           justify-content: center;
           gap: 6px;
-          min-width: 96px;
-          max-width: 220px;
+          min-width: 0;
+          max-width: 100%;
           flex: 1 1 0;
           padding: 4px;
           background: transparent;
@@ -3829,6 +3862,9 @@ export default function BlackjackGame() {
           height: 100%;
           min-height: 0;
           overflow: visible;
+        }
+        .bj-cards {
+          max-width: 100%;
         }
         .bj-hand.is-ghost { opacity: 0.6; }
         .bj-hand.is-waiting {
@@ -3881,20 +3917,28 @@ export default function BlackjackGame() {
         }
         .bj-hand-player .bj-hand-total {
           margin-top: 2px;
+          margin-bottom: 4px;
           min-height: 28px;
+          flex-shrink: 0;
         }
         .bj-outcome-ph {
-          height: 28px;
-          min-height: 28px;
+          height: 26px;
+          min-height: 26px;
           width: 1px;
           visibility: hidden;
           pointer-events: none;
+          flex-shrink: 0;
         }
         .bj-outcome-banner {
-          min-height: 28px;
+          min-height: 26px;
+          height: 26px;
+          margin-top: 2px;
           display: flex;
           align-items: center;
           justify-content: center;
+          flex-shrink: 0;
+          overflow: visible;
+          transform-origin: center bottom;
         }
         .bj-chip-spot-ph {
           display: block;
@@ -4772,8 +4816,8 @@ export default function BlackjackGame() {
           pointer-events: none;
         }
         .bj-outcome-ph {
-          height: 28px !important;
-          min-height: 28px !important;
+          height: 26px !important;
+          min-height: 26px !important;
         }
         .bj-action-row {
           display: flex;
@@ -4995,8 +5039,8 @@ export default function BlackjackGame() {
           .bj-seats { gap: 4px; min-height: 0; }
           .bj-hand {
             min-width: 0 !important;
-            max-width: none !important;
-            flex: 1 1 auto !important;
+            max-width: 100% !important;
+            flex: 1 1 0 !important;
             gap: 3px;
             padding: 1px;
           }
@@ -5010,9 +5054,11 @@ export default function BlackjackGame() {
           }
           .bj-outcome-ph,
           .bj-outcome-banner {
-            min-height: 18px;
-            height: 18px;
-            font-size: 10px;
+            min-height: 22px;
+            height: 22px;
+          }
+          .bj-hand-player .bj-hand-total {
+            margin-bottom: 6px;
           }
           .bj-hand-total {
             padding: 1px 5px;
@@ -5052,12 +5098,7 @@ export default function BlackjackGame() {
           .bj-cards {
             min-height: 120px !important;
             padding-left: 0 !important;
-          }
-          .bj-cards > div {
-            margin-left: -32px !important;
-          }
-          .bj-cards > div:first-child {
-            margin-left: 0 !important;
+            max-width: 100%;
           }
           .bj-shoe { width: 72px; height: 96px; }
           .bj-shoe-shell { width: 66px; height: 88px; }
@@ -5200,6 +5241,7 @@ export default function BlackjackGame() {
                 active={phase === "dealer"}
                 status="active"
                 compact={compact}
+                seatCount={1}
               />
             </div>
             <DealerShoe
@@ -5265,6 +5307,7 @@ export default function BlackjackGame() {
                             phase === "settle" ? flyForHand(h.status) : "idle"
                           }
                           compact={compact || hands.length > 2}
+                          seatCount={seatCount}
                           casinoName={casino.name}
                         />
                       );
@@ -5288,6 +5331,7 @@ export default function BlackjackGame() {
                         active={false}
                         status="active"
                         compact={handCount >= 3}
+                        seatCount={seatCount}
                         ghost
                         casinoName={casino.name}
                       />
